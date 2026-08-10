@@ -1,0 +1,22 @@
+{
+  "apps": [
+    {
+      "name": "linkedin-job-finder",
+      "cwd": "/home/deploy/linkedin-job-finder/backend",
+      "script": "venv/bin/uvicorn",
+      "args": "app.main:app --host 127.0.0.1 --port 8001",
+      "interpreter": "none",
+      "autorestart": true,
+      "max_restarts": 20,
+      "min_uptime": "10s",
+      "max_memory_restart": "700M",
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      },
+      "error_file": "/home/deploy/linkedin-job-finder/logs/err.log",
+      "out_file": "/home/deploy/linkedin-job-finder/logs/out.log",
+      "merge_logs": true,
+      "time": true
+    }
+  ]
+}

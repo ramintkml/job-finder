@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Job Tracker</title>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Fira+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f8fafc; --surface: #fff; --text: #0f172a; --muted: #64748b;
+      --border: #e2e8f0; --accent: #0369a1; --accent-soft: #e0f2fe;
+      --success: #16a34a; --success-soft: #dcfce7; --warning-soft: #fef3c7;
+      --danger: #dc2626; --danger-soft: #fee2e2; --radius: 12px;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Fira Sans', system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    .shell { display: flex; min-height: 100vh; }
+    .sidebar { width: 220px; background: var(--surface); border-right: 1px solid var(--border); padding: 24px 16px; position: fixed; inset: 0 auto 0 0; }
+    .sidebar h1 { margin: 0; font-size: 1rem; }
+    .sidebar p { margin: 4px 0 24px; font-size: 0.78rem; color: var(--muted); }
+    .nav-btn { display: block; width: 100%; text-align: left; padding: 10px 12px; margin-bottom: 4px; border: none; background: transparent; border-radius: 8px; font-weight: 500; color: var(--muted); cursor: pointer; }
+    .nav-btn.active { background: var(--accent-soft); color: var(--accent); }
+    .main { margin-left: 220px; flex: 1; padding: 24px 32px; }
+    .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+    .stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin-bottom: 24px; }
+    .stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; box-shadow: 0 1px 2px rgba(15,23,42,.05); }
+    .stat b { display: block; font-size: 1.6rem; margin-bottom: 4px; }
+    .stat span { font-size: 0.82rem; color: var(--muted); }
+    .stat.featured { background: linear-gradient(135deg,#fff,#f0f9ff); border-color: #bae6fd; }
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+    .chip { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: 0.82rem; cursor: pointer; }
+    .chip.active { background: var(--text); color: #fff; border-color: var(--text); }
+    .split { display: grid; grid-template-columns: 1fr 1.1fr; gap: 20px; }
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; box-shadow: 0 1px 2px rgba(15,23,42,.05); }
+    .panel-h { padding: 14px 18px; border-bottom: 1px solid var(--border); font-weight: 600; }
+    .row { padding: 14px 18px; border-bottom: 1px solid var(--border); cursor: pointer; }
+    .row:hover { background: #f1f5f9; }
+    .row.sel { background: var(--accent-soft); border-left: 3px solid var(--accent); }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
+    .badge-submitted { background: var(--success-soft); color: #15803d; }
+    .badge-pending_review { background: var(--warning-soft); color: #b45309; }
+    .badge-skipped, .badge-new { background: #f1f5f9; color: var(--muted); }
+    .badge-failed { background: var(--danger-soft); color: var(--danger); }
+    .detail { padding: 20px; max-height: 70vh; overflow-y: auto; }
+    pre { white-space: pre-wrap; background: #f1f5f9; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 0.88rem; line-height: 1.6; }
+    .btn { padding: 10px 16px; border-radius: 8px; border: none; font-weight: 600; cursor: pointer; margin-right: 8px; }
+    .btn-p { background: var(--accent); color: #fff; }
+    .btn-s { background: var(--surface); border: 1px solid var(--border); color: var(--muted); }
+    .settings { max-width: 640px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 24px; }
+    input, select, textarea { width: 100%; max-width: 400px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; margin: 4px 0 16px; font-family: inherit; }
+    textarea { min-height: 300px; font-family: 'Fira Code', monospace; font-size: 0.82rem; }
+    .hidden { display: none !important; }
+    .empty { text-align: center; padding: 48px 20px; color: var(--muted); }
+    .test-box { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+    #test-out { width: 100%; margin-top: 12px; font-size: 0.85rem; }
+    @media (max-width: 900px) { .sidebar { display: none; } .main { margin-left: 0; } .split, .stats { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <h1>Job Tracker</h1>
+      <p>@KayaProjectsBot</p>
+      <button class="nav-btn active" data-view="dash">Dashboard</button>
+      <button class="nav-btn" data-view="settings">Settings</button>
+      <p id="tg-pill" style="margin-top:32px;font-size:0.78rem;color:var(--muted)">Telegram: …</p>
+    </aside>
+    <main class="main">
+      <div class="top"><h2 id="page-title" style="margin:0">Dashboard</h2><span style="font-size:0.82rem;color:var(--muted)">Live · 5s refresh</span></div>
+      <div id="dash">
+        <div class="test-box">
+          <div><strong>System test</strong><br><span style="font-size:0.85rem;color:var(--muted)">AI screening + proposal on sample project. No Telegram bid.</span></div>
+          <button class="btn btn-p" id="run-test-btn" onclick="runSystemTest()">Run system test</button>
+          <div id="test-out"></div>
+        </div>
+        <div class="stats" id="stats"></div>
+        <div class="chips" id="filters"></div>
+        <div class="split">
+          <div class="panel"><div class="panel-h">Projects</div><div id="list"></div></div>
+          <div class="panel"><div class="panel-h">Details</div><div class="detail" id="detail"><div class="empty">Select a project</div></div></div>
+        </div>
+      </div>
+      <div id="settings" class="settings hidden">
+        <div class="card">
+          <label>AI Provider<select id="ai_provider"><option value="groq">Groq (free)</option><option value="gemini">Gemini (free)</option><option value="deepseek">DeepSeek</option><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option></select></label>
+          <label>Auto-bid threshold %<input type="number" id="threshold" min="50" max="100" /></label>
+          <label>Max bids/day<input type="number" id="max_bids" min="1" max="50" /></label>
+          <button class="btn btn-p" onclick="saveSettings()">Save</button>
+          <hr style="border:none;border-top:1px solid var(--border);margin:24px 0" />
+          <h3>Telegram</h3>
+          <button class="btn btn-p" onclick="requestCode()">Send login code</button>
+          <input id="tg_code" placeholder="Code" /><input id="tg_pass" type="password" placeholder="2FA (optional)" />
+          <button class="btn btn-p" onclick="confirmLogin()">Confirm</button>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script>
+    const API = '/api';
+    let selected = null, filter = '';
+    const LABELS = { '': 'All', pending_review: 'Pending Review', submitted: 'Submitted', skipped: 'Skipped', failed: 'Failed' };
+    async function j(p, o) { const r = await fetch(API+p, { headers: {'Content-Type':'application/json'}, ...o }); if (!r.ok) throw new Error((await r.json().catch(()=>({}))).detail||r.statusText); return r.json(); }
+    function badge(s) { return `<span class="badge badge-${s}">${s.replace('_',' ')}</span>`; }
+    async function refresh() {
+      const [projects, stats, settings] = await Promise.all([j('/projects'+(filter?'?status='+filter:'')), j('/stats'), j('/settings')]);
+      document.getElementById('stats').innerHTML = `
+        <div class="stat"><b>${stats.submitted}</b><span>Bids sent</span></div>
+        <div class="stat"><b>${stats.pending_review}</b><span>Awaiting review</span></div>
+        <div class="stat"><b>${stats.skipped}</b><span>Skipped</span></div>
+        <div class="stat featured"><b>${stats.bids_today}/${stats.max_bids_per_day}</b><span>Bids today</span></div>`;
+      document.getElementById('filters').innerHTML = ['','pending_review','submitted','skipped','failed'].map(f =>
+        `<button class="chip${filter===f?' active':''}" onclick="setFilter('${f}')">${LABELS[f]||'All'}</button>`).join('');
+      document.getElementById('list').innerHTML = projects.length ? projects.map(p => `
+        <div class="row${selected===p.id?' sel':''}" onclick="showDetail(${p.id})">
+          ${badge(p.status)} ${p.confidence!=null?p.confidence+'%':''}
+          <div style="font-weight:600;margin:6px 0">${p.title}</div>
+          <div style="font-size:0.78rem;color:var(--muted)">${p.freelancer_project_id?'#'+p.freelancer_project_id+' · ':''}${new Date(p.created_at).toLocaleString()}</div>
+        </div>`).join('') : '<div class="empty">No projects yet</div>';
+      document.getElementById('tg-pill').textContent = settings.telegram_connected ? 'Telegram: connected' : 'Telegram: offline';
+      document.getElementById('ai_provider').value = settings.ai_provider;
+      document.getElementById('threshold').value = settings.auto_bid_confidence_threshold;
+      document.getElementById('max_bids').value = settings.max_bids_per_day;
+      if (selected) showDetail(selected);
+    }
+    function setFilter(f) { filter = f; refresh(); }
+    async function showDetail(id) {
+      selected = id; const p = await j('/projects/'+id);
+      document.getElementById('detail').innerHTML = `<h3 style="margin-top:0">${p.title}</h3>${badge(p.status)}
+        ${p.review_reason&&p.status==='pending_review'?'<div style="background:#fef3c7;padding:12px;border-radius:8px;margin:12px 0;color:#92400e">'+p.review_reason+'<br><small>Proposal generated on approve.</small></div>':''}
+        ${p.proposal?'<h4>Proposal</h4><pre>'+p.proposal+'</pre>':''}
+        ${p.status==='submitted'?`<p><strong>${p.currency} ${p.bid_amount}</strong> · ${p.bid_duration} ${p.duration_type==='hours_per_week'?'hrs/wk':'days'}</p>`:''}
+        ${p.skip_reason&&p.status==='skipped'?'<p><em>'+p.skip_reason+'</em></p>':''}
+        <h4>Description</h4><pre>${p.description}</pre>
+        ${p.status==='pending_review'?`<button class="btn btn-p" onclick="approve(${p.id})">Approve & Generate Bid</button><button class="btn btn-s" onclick="skip(${p.id})">Skip</button>`:''}`;
+      refresh();
+    }
+    async function approve(id) { await j('/projects/'+id+'/approve',{method:'POST'}); refresh(); }
+    async function skip(id) { await j('/projects/'+id+'/skip',{method:'POST'}); selected=null; refresh(); }
+    async function saveSettings() { await j('/settings',{method:'PUT',body:JSON.stringify({ai_provider:document.getElementById('ai_provider').value,auto_bid_confidence_threshold:+document.getElementById('threshold').value,max_bids_per_day:+document.getElementById('max_bids').value})}); alert('Saved'); }
+    async function runSystemTest() {
+      const btn = document.getElementById('run-test-btn');
+      const out = document.getElementById('test-out');
+      btn.disabled = true; btn.textContent = 'Running…';
+      out.innerHTML = '';
+      try {
+        const r = await j('/test/run', { method: 'POST' });
+        out.innerHTML = '<div style="color:'+(r.ok?'#15803d':'#dc2626')+'">'+(r.ok?'All checks passed':'Some checks failed')+'</div>'
+          + r.steps.map(s => '<div>'+(s.ok?'OK':'FAIL')+' <b>'+s.step+'</b>: '+s.detail+'</div>').join('')
+          + (r.project_id ? '<button class="btn btn-s" onclick="showDetail('+r.project_id+')">View sample project</button>' : '');
+        refresh();
+      } catch (e) {
+        out.innerHTML = '<div style="color:#dc2626">Failed: '+e.message+'</div>';
+      }
+      btn.disabled = false; btn.textContent = 'Run system test';
+    }
+    async function requestCode() { await j('/telegram/login/request',{method:'POST'}); alert('Code sent'); }
+    async function confirmLogin() { await j('/telegram/login/confirm',{method:'POST',body:JSON.stringify({code:document.getElementById('tg_code').value,password:document.getElementById('tg_pass').value||null})}); refresh(); }
+    document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => {
+      document.querySelectorAll('.nav-btn').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      const v = b.dataset.view;
+      document.getElementById('dash').classList.toggle('hidden', v !== 'dash');
+      document.getElementById('settings').classList.toggle('hidden', v !== 'settings');
+      document.getElementById('page-title').textContent = v === 'dash' ? 'Dashboard' : 'Settings';
+    });
+    refresh(); setInterval(refresh, 5000);
+  </script>
+</body>
+</html>
