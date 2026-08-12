@@ -11,7 +11,7 @@ from typing import Any
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
-from app.ats.fonts import find_unicode_font
+from app.ats.fonts import find_latin_font, find_unicode_font
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,8 @@ def export_resume_pdf(
     headings: dict[str, str] | None = None,
 ) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    font = find_unicode_font(prefer_persian=rtl)
+    # EN must use a Latin font — B Nazanin breaks Latin glyphs in fpdf.
+    font = find_unicode_font(prefer_persian=True) if rtl else find_latin_font()
     pdf = _ResumePDF(rtl=rtl, font_path=font)
     pdf.add_page()
     pdf.set_margins(18, 15, 18)
