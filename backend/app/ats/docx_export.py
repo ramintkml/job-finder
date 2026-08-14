@@ -162,19 +162,38 @@ def _body(
 
 def _bullets(
     doc: Document,
-    items: list[str],
+    items: list,
     *,
     font_name: str = FONT_NAME,
     rtl: bool = False,
+    level: int = 0,
 ) -> None:
+    indent = 12 + (14 * max(level, 0))
     for item in items:
-        item = (item or "").strip()
+        if isinstance(item, dict):
+            text = str(item.get("text") or item.get("title") or "").strip()
+            subs = list(
+                item.get("sub_bullets") or item.get("children") or item.get("bullets") or []
+            )
+            bold = bool(item.get("bold"))
+            if text:
+                p = doc.add_paragraph()
+                _set_paragraph_spacing(p, before=2, after=1, line=1.05)
+                _set_paragraph_rtl(p, rtl=rtl)
+                p.paragraph_format.left_indent = Pt(indent)
+                bullet = "• " if not rtl else "•\u200f "
+                run = p.add_run(f"{bullet}{text}")
+                _set_run_font(run, size_pt=10.5, bold=bold, font_name=font_name)
+            if subs:
+                _bullets(doc, subs, font_name=font_name, rtl=rtl, level=level + 1)
+            continue
+        item = (item or "").strip() if isinstance(item, str) else str(item or "").strip()
         if not item:
             continue
-        # Plain paragraphs + bullet char keep RTL cleaner than List Bullet style
         p = doc.add_paragraph()
         _set_paragraph_spacing(p, before=0, after=2, line=1.05)
         _set_paragraph_rtl(p, rtl=rtl)
+        p.paragraph_format.left_indent = Pt(indent)
         bullet = "• " if not rtl else "•\u200f "
         run = p.add_run(f"{bullet}{item}")
         _set_run_font(run, size_pt=10.5, font_name=font_name)
@@ -306,8 +325,8 @@ def export_resume_docx(
             url = (proj.get("url") or proj.get("link") or "").strip()
             meta = _join_bits(sub, url)
             line = f"{name_p} — {meta}" if meta else name_p
-            _role_header(doc, line, font_name=font, rtl=rtl)
-            _bullets(doc, list(proj.get("bullets") or []), font_name=font, rtl=rtl)
+            parent = [{"text": line, "bold": True, "sub_bullets": list(proj.get("bullets") or [])}]
+            _bullets(doc, parent, font_name=font, rtl=rtl, level=0)
 
     # --- Additional Experience ---
     additional = resume.get("additional_experience") or []
@@ -544,17 +563,22 @@ def _export_markdown_docx_linear(markdown: str, path: Path) -> Path:
             continue
 
         bullet = False
-        if line.startswith(("- ", "* ", "• ")):
+        indent_level = 0
+        stripped = raw.rstrip()
+        if stripped.lstrip().startswith(("- ", "* ", "• ")):
+            lead = len(stripped) - len(stripped.lstrip())
+            indent_level = 1 if lead >= 2 else 0
             bullet = True
-            line = line[2:].strip()
+            line = stripped.lstrip()[2:].strip()
         elif len(line) > 2 and line[0].isdigit() and line[1:3] in (". ", ") "):
             bullet = True
             line = line[3:].strip() if line[1] == "." else line[2:].strip()
 
         if bullet:
-            p = doc.add_paragraph(style="List Bullet")
+            p = doc.add_paragraph()
             _set_paragraph_spacing(p, before=0, after=2, line=1.05)
-            _add_inline_runs(p, line, size=10.5)
+            p.paragraph_format.left_indent = Pt(12 + 14 * indent_level)
+            _add_inline_runs(p, f"• {line}", size=10.5)
         else:
             p = doc.add_paragraph()
             _set_paragraph_spacing(p, before=0, after=3, line=1.05)

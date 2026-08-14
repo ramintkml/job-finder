@@ -96,8 +96,8 @@ class _ResumePDF(FPDF):
         bold: bool = False,
         h: float = 5,
     ) -> None:
-        text = (text or "").strip()
-        if not text:
+        text = (text or "").rstrip()
+        if not text.strip():
             return
         if self._uni:
             rendered = _shape_persian(text) if self._rtl or _has_persian(text) else text
@@ -152,14 +152,25 @@ def export_resume_pdf(
         if text:
             pdf.ln(1)
 
-    def bullets(items: list) -> None:
+    def bullets(items: list, *, level: int = 0) -> None:
         for item in items:
-            item = (item or "").strip()
+            if isinstance(item, dict):
+                text = str(item.get("text") or "").strip()
+                if text:
+                    prefix = "    " * level + ("• " if not rtl else "• ")
+                    write(f"{prefix}{text}", size=10, bold=bool(item.get("bold")), h=5)
+                bullets(
+                    list(item.get("sub_bullets") or item.get("children") or item.get("bullets") or []),
+                    level=level + 1,
+                )
+                continue
+            item = str(item or "").strip()
             if not item:
                 continue
-            prefix = "• " if not rtl else "• "
+            prefix = "    " * level + ("• " if not rtl else "• ")
             write(f"{prefix}{item}", size=10, h=5)
-        pdf.ln(1)
+        if level == 0:
+            pdf.ln(1)
 
     write(resume.get("full_name") or "Candidate", size=16, bold=True, h=8)
     title = (resume.get("professional_title") or "").strip()
@@ -198,9 +209,10 @@ def export_resume_pdf(
         for proj in projects:
             name = (proj.get("name") or "").strip()
             sub = (proj.get("subtitle") or "").strip()
-            line = f"{name} — {sub}" if sub else name
-            write(line, size=10, bold=True, h=5)
-            bullets(list(proj.get("bullets") or []))
+            url = (proj.get("url") or proj.get("link") or "").strip()
+            meta = _join_bits(sub, url)
+            line = f"{name} — {meta}" if meta else name
+            bullets([{"text": line, "bold": True, "sub_bullets": list(proj.get("bullets") or [])}])
 
     additional = resume.get("additional_experience") or []
     if additional:

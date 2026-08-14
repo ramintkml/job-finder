@@ -160,6 +160,20 @@ Then complete ALL of this:
    Selected Projects → Additional Experience (optional) → Professional Experience →
    Research (optional) → Education → Languages & Certifications.
    Prefer DOCX-ready markdown with those exact section headings.
+
+   SELECTED PROJECTS (mandatory): include ALL five base-CV projects on every resume.
+   Never drop one. Reorder by JD relevance (closest stack first). Keep links.
+   Shape: parent bullet = project name + links; sub-bullets = 4–5 ATS-tailored
+   truthful facts (max 6). Required links:
+   - Bendly — github.com/Bendly-app | https://stg.bendly.io/
+   - Medinex — github.com/ramintkml/medinex | medinex.top
+   - OT Clinic — github.com/ramintkml/ot-clinic | fereshteganrehab.ir (live)
+   - Job Finder — github.com/ramintkml/job-finder
+   - Roof Graph Extraction — github.com/ramintkml/Roof_Graph_Extraction
+   Example:
+   - Job Finder — Freelancer & LinkedIn Automation — github.com/ramintkml/job-finder
+     - Developed FastAPI-based systems ...
+     - Designed and refined prompts ...
 4. Create/overwrite these files under `{rel}/`:
    - posting.md
    - evaluation.md  (score table + recommendation + why apply / why not + CV gaps)
@@ -222,6 +236,7 @@ Rules:
 - Refresh the APPLY advice if the improved resume changes fit positioning (still honest).
 - Follow `.agents/skills/job-search-copilot/references/ats-resume-guide.md` for the rewrite
   (Claim/Bridge/Omit/Flag, approved verbs, self-check). Do not invent tools to chase keywords.
+- Keep ALL five Selected Projects (Bendly, Medinex + medinex.top, OT Clinic, Job Finder + github.com/ramintkml/job-finder, Roof Graph Extraction). Reorder by JD; parent bullet + sub-bullets; keep links.
 
 Read first:
 - `{rel}/evaluation.md`  (PRIMARY fit brief)
@@ -433,6 +448,28 @@ async def run_codex_apply(payload: dict[str, Any]) -> dict[str, Any]:
     resume_md = resume_path.read_text(encoding="utf-8") if resume_path.is_file() else ""
     evaluation_md = eval_path.read_text(encoding="utf-8") if eval_path.is_file() else ""
 
+    structured = None
+    if resume_md.strip():
+        try:
+            from app.ats.docx_export import _enrich_from_markdown_sections
+            from app.ats.score import markdown_resume_to_dict
+            from app.ats.selected_projects import (
+                apply_projects_to_markdown,
+                ensure_selected_projects,
+            )
+
+            structured = ensure_selected_projects(
+                _enrich_from_markdown_sections(
+                    resume_md, markdown_resume_to_dict(resume_md)
+                ),
+                job_text=f"{title}\n{company}\n{description}",
+            )
+            resume_md = apply_projects_to_markdown(resume_md, structured)
+            resume_path.write_text(resume_md, encoding="utf-8")
+        except Exception:
+            logger.exception("Failed to normalize Selected Projects for %s", out_dir)
+            structured = None
+
     from app.ats.naming import resume_filename, sanitize_job_title
 
     short_title = sanitize_job_title(
@@ -448,25 +485,31 @@ async def run_codex_apply(payload: dict[str, Any]) -> dict[str, Any]:
         try:
             from app.ats.docx_export import export_markdown_docx
 
-            export_markdown_docx(resume_md, docx_path)
-            if docx_path.resolve() != legacy_docx.resolve():
-                legacy_docx.write_bytes(docx_path.read_bytes())
-            resume_docx_b64 = _file_b64(docx_path)
-            # English PDF next to DOCX
             try:
-                from app.ats.docx_export import _enrich_from_markdown_sections
+                from app.ats.docx_export import _enrich_from_markdown_sections, export_resume_docx
                 from app.ats.pdf_export import export_resume_pdf
                 from app.ats.score import markdown_resume_to_dict
 
-                structured = _enrich_from_markdown_sections(
-                    resume_md, markdown_resume_to_dict(resume_md)
-                )
+                if structured is None:
+                    structured = _enrich_from_markdown_sections(
+                        resume_md, markdown_resume_to_dict(resume_md)
+                    )
+                export_resume_docx(structured, docx_path)
+                if docx_path.resolve() != legacy_docx.resolve():
+                    legacy_docx.write_bytes(docx_path.read_bytes())
+                resume_docx_b64 = _file_b64(docx_path)
                 pdf_path = out_dir / resume_filename(
                     lang="en", job_title=short_title, ext="pdf"
                 )
                 export_resume_pdf(structured, pdf_path)
             except Exception:
-                logger.exception("EN PDF export failed for %s", out_dir)
+                logger.exception("EN DOCX/PDF export failed for %s", out_dir)
+                from app.ats.docx_export import export_markdown_docx
+
+                export_markdown_docx(resume_md, docx_path)
+                if docx_path.resolve() != legacy_docx.resolve():
+                    legacy_docx.write_bytes(docx_path.read_bytes())
+                resume_docx_b64 = _file_b64(docx_path)
         except Exception:
             logger.exception("Failed to export resume.docx for %s", out_dir)
 

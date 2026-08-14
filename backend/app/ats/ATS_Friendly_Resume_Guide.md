@@ -169,13 +169,20 @@ When engagements are parallel rather than sequential:
 
 ## Projects
 
-1–2 relevant projects when they strengthen JD fit:
+Always include **all five** Selected Projects from the base CV. Never drop one.
 
-- Name (+ optional subtitle)
-- 2–4 bullets with tech + outcome
-- Prefer projects that mirror JD stack (RAG, agents, CV, etc.) **only if real**
+- Reorder by JD relevance (closest stack/domain first; others still listed)
+- Parent bullet: project name + GitHub and/or live URL
+- Sub-bullets: 3–6 truthful facts, rewritten with Claim/Bridge JD spellings
+- Required links: Bendly (github.com/Bendly-app | https://stg.bendly.io/), Medinex (github.com/ramintkml/medinex | medinex.top), OT Clinic (github.com/ramintkml/ot-clinic | fereshteganrehab.ir), Job Finder (github.com/ramintkml/job-finder), Roof Graph Extraction (github.com/ramintkml/Roof_Graph_Extraction)
 
-Omit the section if nothing relevant exists.
+```text
+- Project Name — github.com/... | live-url
+  - Developed ... (JD-aligned, evidence-backed)
+  - Implemented ...
+```
+
+Do not invent extra projects. Extra Experience themes stay under Additional Experience.
 
 ---
 
@@ -254,7 +261,7 @@ Execute in order. Do not skip.
 6. **Write Summary** — 3–5 lines; JD-aligned title/stack; truthful only.
 7. **Write Skills** — categorized; Claim keywords first.
 8. **Rewrite Experience bullets** — verb + tech + result; tailor emphasis to JD; keep facts fixed.
-9. **Add Projects** only if they improve truthful fit.
+9. **Write Selected Projects** — include all five base-CV projects; reorder by JD; parent bullet + sub-bullets; keep GitHub/live links; tailor details with Claim/Bridge spellings only.
 10. **Education / Certs** — compact, accurate.
 11. **Self-check** (below) — fix failures before export.
 12. **Export DOCX** — single-column, Calibri/Arial, no tables/headers/footers.

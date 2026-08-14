@@ -12,30 +12,257 @@ METRIC_RE = re.compile(
     re.I,
 )
 
+# JD boilerplate / country words that must never be treated as ATS skills
+_KEYWORD_JUNK = {
+    "location",
+    "united",
+    "states",
+    "about",
+    "client",
+    "opportunity",
+    "responsibilities",
+    "requirements",
+    "benefits",
+    "perks",
+    "note",
+    "show",
+    "more",
+    "less",
+    "equal",
+    "range",
+    "package",
+    "compensation",
+    "salary",
+    "remotehunter",
+    "employer",
+    "record",
+    "purpose",
+    "description",
+    "title",
+    "company",
+    "unknown",
+    "url",
+    "https",
+    "http",
+    "www",
+    "source",
+    "bridge",
+    "untrusted",
+    "posting",
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "this",
+    "that",
+    "our",
+    "their",
+    "your",
+    "you",
+    "they",
+    "will",
+    "must",
+    "have",
+    "has",
+    "are",
+    "was",
+    "were",
+    "been",
+    "being",
+    "into",
+    "onto",
+    "over",
+    "under",
+    "role",
+    "team",
+    "jobs",
+    "view",
+}
+
+
+def _looks_like_link_tail(text: str) -> bool:
+    t = (text or "").lower()
+    return any(
+        x in t
+        for x in (
+            "github.com",
+            "http",
+            ".top",
+            ".ir",
+            ".com",
+            ".io",
+            "staging",
+            "live",
+            "stg.bendly",
+        )
+    )
+
+
+def _looks_like_project_title(line: str) -> bool:
+    """Plain 'Name — github/url' lines start a new project (not a bullet)."""
+    s = (line or "").strip()
+    if not s or s.startswith(("-", "*", "•")):
+        return False
+    if not re.search(r"\s+[—\-–]\s+", s):
+        return False
+    return _looks_like_link_tail(s) or len(s) <= 140
+
+
+def _looks_like_role_title(line: str) -> bool:
+    """Plain 'Title — Company | Location | dates' starts a new experience role."""
+    s = (line or "").strip()
+    if not s or s.startswith(("-", "*", "•")):
+        return False
+    if "|" in s and re.search(r"\d{4}|Present|months?", s, re.I):
+        return True
+    if re.match(r"^[A-Z][A-Za-z0-9 /&+().-]{2,60}\s+[—–-]\s+\S+", s) and len(s) <= 140:
+        if re.search(
+            r"Developer|Engineer|Specialist|Manager|Assistant|Lead|Intern|Consultant",
+            s,
+            re.I,
+        ):
+            return True
+    return False
+
+
+def _parse_role_line(line: str) -> dict[str, Any]:
+    bits = [b.strip() for b in re.split(r"\s*\|\s*", line)]
+    left = bits[0] if bits else line
+    parts = re.split(r"\s+[—–-]\s+", left, maxsplit=1)
+    dates = ""
+    location = ""
+    if len(bits) > 1 and re.search(r"\d{4}|Present|months?", bits[-1] or "", re.I):
+        dates = bits[-1]
+        if len(bits) > 2:
+            location = bits[1]
+    elif len(bits) == 2:
+        location = bits[1]
+    return {
+        "title": (parts[0] if parts else left).strip(),
+        "company": (parts[1] if len(parts) > 1 else "").strip(),
+        "location": location,
+        "dates": dates,
+        "bullets": [],
+    }
+
+
+def _looks_like_edu_line(line: str) -> bool:
+    s = (line or "").strip()
+    if not s or s.startswith(("-", "*", "•")):
+        return False
+    return bool(re.search(r"\b(MSc|BSc|PhD|Bachelor|Master|University|GPA)\b", s, re.I))
+
+
+def _is_junk_keyword(keyword: str) -> bool:
+    kl = re.sub(r"[^a-z0-9+#.\s'-]+", " ", (keyword or "").lower()).strip()
+    if not kl or kl in _KEYWORD_JUNK:
+        return True
+    parts = [p for p in re.split(r"\s+", kl) if p]
+    if parts and (parts[0] in _KEYWORD_JUNK or all(p in _KEYWORD_JUNK for p in parts)):
+        return True
+    return False
+
+
+def keyword_in_text(keyword: str, text: str) -> bool:
+    """Match JD phrases without requiring the word 'Experience' or curly quotes."""
+    raw = (keyword or "").strip().lower()
+    hay = (text or "").lower()
+    if not raw or not hay:
+        return False
+    raw = raw.replace("\u2019", "'").replace("\u2018", "'")
+    hay = hay.replace("\u2019", "'").replace("\u2018", "'")
+    if raw in hay:
+        return True
+    stripped = re.sub(
+        r"\s+(experience|background|knowledge|skills?|proficiency)\s*$",
+        "",
+        raw,
+    ).strip()
+    if stripped and stripped != raw and stripped in hay:
+        return True
+    parts = [p for p in re.findall(r"[a-z0-9+#.]{3,}", stripped or raw) if p not in _KEYWORD_JUNK]
+    if len(parts) >= 2:
+        return all(p in hay for p in parts)
+    if len(parts) == 1:
+        return parts[0] in hay
+    return False
+
 
 def extract_jd_keywords(job_description: str, ai_keywords: list[str] | None = None) -> list[str]:
     keywords: list[str] = []
+    ai_set: set[str] = set()
     if ai_keywords:
-        keywords.extend(str(k).strip() for k in ai_keywords if str(k).strip())
-    # Fallback: capitalize tech-looking tokens from JD
+        for k in ai_keywords:
+            s = str(k).strip()
+            if s:
+                keywords.append(s)
+                ai_set.add(s.lower())
     for match in re.finditer(
-        r"\b([A-Z][A-Za-z0-9+#.]{1,24}|python|react|fastapi|typescript|llm|rag|docker|aws|azure)\b",
+        r"\b([A-Z][A-Za-z0-9+#.]{1,24}|[Pp]ython|[Rr]eact|[Ff]astAPI|[Tt]ype[Ss]cript|LLMs?|RAG|[Dd]ocker|AWS|[Aa]zure)\b",
         job_description or "",
-        re.I,
     ):
         token = match.group(1).strip()
         if len(token) >= 2:
             keywords.append(token)
-    # Dedupe case-insensitive, preserve order
     seen: set[str] = set()
     out: list[str] = []
     for k in keywords:
+        if _is_junk_keyword(k):
+            continue
+        if len(k) < 3 and k.upper() not in {"AI", "ML", "CI", "CD", "AWS", "SQL", "RAG", "API"}:
+            continue
+        if "linkedin.com" in k.lower() or k.lower().startswith("http"):
+            continue
+        if "." in k and not re.search(r"(js|sql|net|py)$", k.lower()):
+            continue
+        if k.lower() not in ai_set and not _looks_like_skill_token(k):
+            continue
         key = k.lower()
         if key in seen:
             continue
         seen.add(key)
         out.append(k)
     return out[:40]
+
+
+def _looks_like_skill_token(token: str) -> bool:
+    t = (token or "").strip()
+    if re.search(r"[0-9+#./]", t):
+        return True
+    if re.search(r"[a-z][A-Z]", t):
+        return True
+    if t.isupper() and 2 <= len(t) <= 5:
+        return True
+    return t.lower() in {
+        "python",
+        "react",
+        "fastapi",
+        "flask",
+        "typescript",
+        "javascript",
+        "docker",
+        "postgres",
+        "postgresql",
+        "llm",
+        "llms",
+        "rag",
+        "aws",
+        "azure",
+        "gcp",
+        "pytorch",
+        "tensorflow",
+        "chromadb",
+        "saas",
+        "fintech",
+        "prompt",
+        "anthropic",
+        "claude",
+        "codex",
+        "cursor",
+        "postgresql",
+        "postgres",
+    }
 
 
 def _all_bullets(resume: dict[str, Any]) -> list[str]:
@@ -244,6 +471,44 @@ def markdown_resume_to_dict(markdown: str) -> dict[str, Any]:
                 certifications.append(body)
             continue
         if section in ("experience", "projects", "education", "additional"):
+            if (
+                section == "experience"
+                and not bullet
+                and _looks_like_role_title(body)
+            ):
+                flush_current()
+                current = _parse_role_line(body)
+                current_list = experience
+                continue
+            if (
+                section == "education"
+                and not bullet
+                and _looks_like_edu_line(body)
+            ):
+                flush_current()
+                current = {"degree": body, "school": "", "dates": "", "bullets": []}
+                current_list = education
+                continue
+            if (
+                section == "projects"
+                and not bullet
+                and _looks_like_project_title(body)
+            ):
+                flush_current()
+                parts = re.split(r"\s+[—\-–]\s+", body, maxsplit=1)
+                url = ""
+                name_p = body
+                if len(parts) == 2 and _looks_like_link_tail(parts[1]):
+                    name_p = parts[0].strip()
+                    url = parts[1].strip()
+                current = {
+                    "name": name_p.strip().strip("*"),
+                    "subtitle": "",
+                    "url": url,
+                    "bullets": [],
+                }
+                current_list = projects
+                continue
             if current is None:
                 if section == "experience":
                     current = {"title": body, "company": "", "dates": "", "bullets": []}
@@ -330,7 +595,7 @@ def score_resume(
     matched: list[str] = []
     missing: list[str] = []
     for kw in keywords:
-        if kw.lower() in text:
+        if keyword_in_text(kw, text):
             matched.append(kw)
         else:
             missing.append(kw)

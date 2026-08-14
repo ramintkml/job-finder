@@ -192,6 +192,14 @@ PC_WORKER_LABELS = {
     "worker",
 }
 
+BASE_CV_LABELS = {
+    "📄 رزومه پایه",
+    "رزومه پایه",
+    "base cv",
+    "/basecv",
+    "basecv",
+}
+
 
 def pc_worker_status_message() -> dict:
     """Reply-keyboard action: show whether the PC worker is online."""
@@ -223,6 +231,30 @@ def pc_worker_status_message() -> dict:
     if name:
         lines.append(f"شناسه: <code>{html.escape(name[:64])}</code>")
     return {"message": "\n".join(lines)}
+
+
+def send_base_cv_files(telegram_user_id: int) -> dict:
+    """Build and send the current base CV as English DOCX + PDF."""
+    from app.ats.base_cv_export import export_base_cv_files
+    from app.config import DATA_DIR
+
+    text = _resolve_base_cv(telegram_user_id)
+    if len(text) < 40:
+        return {"message": "رزومه پایه پیدا نشد. اول رزومه را در ربات ذخیره کنید."}
+    dest = DATA_DIR / "cv" / "generated"
+    try:
+        docx_path, pdf_path = export_base_cv_files(text, dest)
+    except Exception:
+        logger.exception("Base CV export failed")
+        return {"message": "ساخت فایل رزومه پایه ناموفق بود."}
+    return {
+        "message": "رزومه پایه (انگلیسی) — DOCX و PDF",
+        "send_documents": [
+            {"path": str(docx_path), "caption": "Base CV — DOCX"},
+            {"path": str(pdf_path), "caption": "Base CV — PDF"},
+        ],
+        "skip_improve_hint": True,
+    }
 
 
 def _bool_icon(v: bool) -> str:

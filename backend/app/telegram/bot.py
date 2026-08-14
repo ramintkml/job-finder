@@ -162,6 +162,7 @@ class ReviewBot:
             {"command": "start", "description": "شروع و راهنما"},
             {"command": "apply", "description": "ارسال آگهی شغل (JD) → ارزیابی + رزومه"},
             {"command": "worker", "description": "وضعیت آنلاین بودن PC Worker"},
+            {"command": "basecv", "description": "دانلود رزومه پایه (DOCX + PDF)"},
             {"command": "jobs", "description": "شغل‌های جدید برای بررسی"},
             {"command": "search", "description": "تنظیم جستجوی لینکدین"},
             {"command": "gmail", "description": "راه‌اندازی و وضعیت جیمیل"},
@@ -791,6 +792,23 @@ class ReviewBot:
             "pc worker",
         ):
             result = bot_user_tools.pc_worker_status_message()
+            await self._apply_user_tool_result(
+                result,
+                chat_id=int(chat_id),
+                is_admin=is_admin,
+                telegram_user_id=uid,
+            )
+            return
+
+        if text in bot_user_tools.BASE_CV_LABELS or lower in (
+            "/basecv",
+            "basecv",
+            "base cv",
+        ):
+            if telegram_user_id is None:
+                await self.send_message("شناسه کاربر یافت نشد.", chat_id=chat_id)
+                return
+            result = bot_user_tools.send_base_cv_files(int(telegram_user_id))
             await self._apply_user_tool_result(
                 result,
                 chat_id=int(chat_id),

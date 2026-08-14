@@ -10,6 +10,7 @@ from app.ats.guide import load_ats_guide
 from app.ats.pipeline_v2.hard_insert import hard_insert
 from app.ats.pipeline_v2.ledger import build_ledger, ledger_prompt_block
 from app.ats.pipeline_v2.self_check import self_check
+from app.ats.selected_projects import ensure_selected_projects, project_markdown_rules
 from app.ats.tips import format_guidance_for_tailor
 from app.config import settings
 
@@ -73,6 +74,7 @@ URL: {job_url}
 Description:
 {description[:6000]}
 {ledger_block}{guidance_block}
+{project_markdown_rules()}
 Return JSON with this shape (Ramin Takmil CV template — keep this section order):
 {{
   "full_name": "...",
@@ -90,12 +92,12 @@ Return JSON with this shape (Ramin Takmil CV template — keep this section orde
     "Frameworks & tools": ["..."],
     "Focus areas": ["..."]
   }},
-  "projects": [
+    "projects": [
     {{
-      "name": "...",
-      "subtitle": "optional one-liner",
-      "url": "optional github or live URL",
-      "bullets": ["Action Verb + Technology + Measurable Result", "..."]
+      "name": "canonical project name",
+      "subtitle": "",
+      "url": "github and/or live URL — required",
+      "bullets": ["Action Verb + JD-aligned tech + truthful result", "..."]
     }}
   ],
   "additional_experience": [
@@ -143,6 +145,10 @@ Omit empty optional sections rather than inventing content.
         # Second hard-insert pass after normalizing skills categories
         data, missing = hard_insert(data, ledger)
         check = self_check(data, ledger)
+
+    data = ensure_selected_projects(
+        data, job_text=f"{title}\n{company}\n{description}"
+    )
 
     data["keywords_from_jd"] = ledger.scored_write_as()
     data["_pipeline_v2"] = {

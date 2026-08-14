@@ -6,7 +6,7 @@ import logging
 import re
 from typing import Any
 
-from app.ats.score import extract_jd_keywords
+from app.ats.score import extract_jd_keywords, _is_junk_keyword, keyword_in_text
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,9 @@ Max 25 must_have and 15 nice_to_have.
     except Exception:
         logger.exception("AI keyword extraction failed; using heuristics only")
 
-    all_keywords = extract_jd_keywords(jd, ai_must + ai_nice + heuristic)
+    all_keywords = [
+        k for k in extract_jd_keywords(jd, ai_must + ai_nice + heuristic) if not _is_junk_keyword(k)
+    ]
 
     cv_l = (base_cv or "").lower()
     claimable: list[str] = []
@@ -102,9 +104,6 @@ def _dedupe(items: list[str]) -> list[str]:
 
 
 def _fuzzy_in_cv(keyword: str, cv_lower: str) -> bool:
-    """Light match for variants like PyTorch vs pytorch."""
-    parts = re.findall(r"[a-z0-9+#.]{2,}", keyword.lower())
-    if not parts:
-        return False
-    # Require all significant tokens present
-    return all(p in cv_lower for p in parts if len(p) >= 3)
+    if _is_junk_keyword(keyword):
+        return True
+    return keyword_in_text(keyword, cv_lower)

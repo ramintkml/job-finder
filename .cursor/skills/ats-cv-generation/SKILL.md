@@ -34,7 +34,7 @@ Execute the guide's **JD -> CV Generation Pipeline** in order:
 6. Write Summary (3-5 lines)
 7. Write Skills (categorized; Claim keywords first)
 8. Rewrite Experience bullets (verb + tech + result; facts fixed)
-9. Add Projects only if they improve truthful fit
+9. Add **all five** Selected Projects (reorder by JD; bullets + sub-bullets; keep links; tailor details to the JD without inventing facts)
 10. Education / Certs compact and accurate
 11. Run **Pre-Output Self-Check**
 12. Prefer **DOCX** single-column export

@@ -68,11 +68,28 @@ def resume_to_html_fa(resume: dict[str, Any], *, font_path: Path | None = None) 
             sections.append(f"<p>{_esc(t)}</p>")
 
     def bullets(items: list) -> None:
-        clean = [str(x).strip() for x in (items or []) if str(x).strip()]
-        if not clean:
-            return
-        lis = "".join(f"<li>{_esc(x)}</li>" for x in clean)
-        sections.append(f"<ul>{lis}</ul>")
+        def _lis(rows: list) -> str:
+            parts: list[str] = []
+            for x in rows or []:
+                if isinstance(x, dict):
+                    text = str(x.get("text") or "").strip()
+                    kids = list(x.get("sub_bullets") or x.get("children") or x.get("bullets") or [])
+                    inner = _esc(text)
+                    if kids:
+                        inner += _lis(kids)
+                    if inner:
+                        parts.append(f"<li>{inner}</li>")
+                else:
+                    s = str(x).strip()
+                    if s:
+                        parts.append(f"<li>{_esc(s)}</li>")
+            if not parts:
+                return ""
+            return "<ul>" + "".join(parts) + "</ul>"
+
+        html_list = _lis(items)
+        if html_list:
+            sections.append(html_list)
 
     if resume.get("summary"):
         heading("summary")
@@ -102,9 +119,10 @@ def resume_to_html_fa(resume: dict[str, Any], *, font_path: Path | None = None) 
         for proj in projects:
             name_p = (proj.get("name") or "").strip()
             sub = (proj.get("subtitle") or "").strip()
-            line = f"{name_p} — {sub}" if sub else name_p
-            sections.append(f'<p class="role">{_esc(line)}</p>')
-            bullets(list(proj.get("bullets") or []))
+            url = (proj.get("url") or proj.get("link") or "").strip()
+            meta = _join_bits(sub, url)
+            line = f"{name_p} — {meta}" if meta else name_p
+            bullets([{"text": line, "sub_bullets": list(proj.get("bullets") or [])}])
 
     additional = resume.get("additional_experience") or []
     if additional:
@@ -240,6 +258,10 @@ ul {{
   margin: 0 0 8px 0;
   padding: 0 18px 0 0;
   list-style-position: outside;
+}}
+ul ul {{
+  margin: 2px 0 6px 0;
+  padding: 0 16px 0 0;
 }}
 li {{ margin: 0 0 3px 0; }}
 </style>
