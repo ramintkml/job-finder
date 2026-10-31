@@ -2,9 +2,11 @@ const API = "/api";
 
 async function fetchJson(path, options = {}) {
   const res = await fetch(`${API}${path}`, {
-    headers: { "Content-Type": "application/json", ...options.headers },
     ...options,
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", ...options.headers },
   });
+  if (res.status === 401 && !path.startsWith("/auth/")) window.dispatchEvent(new Event("session-expired"));
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     const detail = err.detail;
@@ -18,6 +20,10 @@ async function fetchJson(path, options = {}) {
 }
 
 export const api = {
+  telegramLogin: (init_data) => fetchJson("/auth/login", {method: "POST", body: JSON.stringify({init_data})}),
+  me: () => fetchJson("/auth/me"),
+  login: (password) => fetchJson("/auth/login", {method: "POST", body: JSON.stringify({password})}),
+  logout: () => fetchJson("/auth/logout", {method: "POST"}),
   health: () => fetchJson("/health"),
   workerStatus: () => fetchJson("/worker/status"),
 

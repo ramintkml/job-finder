@@ -8,18 +8,10 @@ def apply_persisted_settings(db: Session) -> None:
 
     rows = db.query(AppSettings).all()
     for row in rows:
-        if row.key == "ai_provider":
-            settings.ai_provider = row.value
-        elif row.key == "ai_model":
-            settings.ai_model = row.value
-        elif row.key == "ai_screening_provider":
-            settings.ai_screening_provider = row.value
-        elif row.key == "ai_screening_model":
-            settings.ai_screening_model = row.value
-        elif row.key == "ai_proposal_provider":
-            settings.ai_proposal_provider = row.value
-        elif row.key == "ai_proposal_model":
-            settings.ai_proposal_model = row.value
+        if row.key in ("ai_provider", "ai_screening_provider", "ai_proposal_provider"):
+            setattr(settings, row.key, "codex")
+        elif row.key == "codex_model":
+            settings.codex_model = row.value
         elif row.key == "automation_enabled":
             settings.automation_enabled = row.value.lower() in ("1", "true", "yes")
         elif row.key == "freelancer_bidding_enabled":
@@ -30,16 +22,6 @@ def apply_persisted_settings(db: Session) -> None:
             settings.max_bids_per_day = int(row.value)
         elif row.key == "test_mode":
             settings.test_mode = row.value.lower() in ("1", "true", "yes")
-        elif row.key == "groq_api_key" and row.value:
-            settings.groq_api_key = row.value
-        elif row.key == "gemini_api_key" and row.value:
-            settings.gemini_api_key = row.value
-        elif row.key == "deepseek_api_key" and row.value:
-            settings.deepseek_api_key = row.value
-        elif row.key == "anthropic_api_key" and row.value:
-            settings.anthropic_api_key = row.value
-        elif row.key == "openai_api_key" and row.value:
-            settings.openai_api_key = row.value
 
     # Plan prices + card-to-card details (admin-editable)
     from app.billing.commerce import apply_commerce_on_startup
@@ -50,6 +32,11 @@ def apply_persisted_settings(db: Session) -> None:
 def persist_setting(db: Session, key: str, value: str) -> None:
     from app.database import AppSettings
 
+    if key in ("ai_provider", "ai_screening_provider", "ai_proposal_provider"):
+        if value != "codex":
+            raise ValueError("Only Codex is supported")
+    if key.endswith("_api_key"):
+        raise ValueError("AI API keys are retired; use codex login on the PC")
     row = db.get(AppSettings, key)
     if row:
         row.value = value

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
+from sqlalchemy import update
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -21,6 +23,8 @@ JOB_ATS_REGENERATE = "ats_regenerate"
 JOB_PROJECT_SEND = "project_send_bid"
 JOB_VECTOR_SCREEN = "vector_screen"
 JOB_CODEX_APPLY = "codex_apply"
+JOB_CV_EDIT = "cv_edit"
+JOB_CODEX_TEXT = "codex_text"
 JOB_SAVE_FILES = "save_files"
 
 ACTIVE_STATUSES = ("pending", "claimed")
@@ -99,7 +103,7 @@ def worker_status(db: Session) -> dict[str, Any]:
             last_seen = None
 
     pending = db.query(WorkJob).filter(WorkJob.status == "pending").count()
-    claimed = db.query(WorkJob).filter(WorkJob.status == "claimed").count()
+    claimed = db.query(WorkJob).filter(WorkJob.status.in_(("claimed", "applying"))).count()
     failed = (
         db.query(WorkJob)
         .filter(WorkJob.status == "failed")
@@ -197,6 +201,7 @@ def build_payload(db: Session, job_type: str, entity_id: int, extra: dict | None
             from app.linkedin.settings import load_linkedin_settings
 
             payload["linkedin_settings"] = asdict(load_linkedin_settings(db))
+            payload["linkedin_settings"].pop("gmail_app_password", None)
         if job_type == JOB_LINKEDIN_RESUME:
             row = db.query(AtsResume).filter(AtsResume.linkedin_job_db_id == entity_id).first()
             if row:
@@ -231,11 +236,54 @@ def build_payload(db: Session, job_type: str, entity_id: int, extra: dict | None
             raise ValueError("vector_screen requires text")
         payload["text"] = text[:60000]
 
+    elif job_type == JOB_CODEX_TEXT:
+        for field in ("system", "user"):
+            if not isinstance(payload.get(field), str) or not 1 <= len(payload[field]) <= 250000:
+                raise ValueError("Invalid Codex text request")
+    elif job_type == JOB_CV_EDIT:
+        if payload.get("section") not in ("projects", "experience", "skills") or payload.get("language") not in ("en", "fa"):
+            raise ValueError("Invalid CV interview parameters")
+        if int(payload.get("telegram_user_id") or 0) != int(entity_id) or int(entity_id) <= 0:
+            raise ValueError("Invalid CV interview owner")
+        messages = payload.get("messages")
+        if not isinstance(messages, list) or not 1 <= len(messages) <= 30:
+            raise ValueError("Invalid CV interview conversation")
+        if any(not isinstance(m, dict) or m.get("role") not in ("user", "assistant") or not isinstance(m.get("content"), str) for m in messages):
+            raise ValueError("Invalid CV interview message")
+        if sum(len(m["content"]) for m in messages) > 40000:
+            raise ValueError("CV interview conversation too long")
+        import re
+        for key in ("session_id", "request_id"):
+            if not re.fullmatch(r"[a-f0-9]{32}", str(payload.get(key) or "")):
+                raise ValueError("Invalid CV interview request")
+        payload["chat_id"] = int(entity_id)
     elif job_type == JOB_CODEX_APPLY:
         # Payload is fully provided via `extra` at enqueue time.
+        from app.services.cv_service import read_cv
+        uid = int(payload.get("telegram_user_id") or entity_id)
+        if not payload.get("base_cv_text"):
+            payload["base_cv_text"] = read_cv(uid)
+        if not payload.get("base_cv_text") and uid not in settings.admin_telegram_ids:
+            raise ValueError("Save your base CV before applying")
+        payload["base_cv_text"] = str(payload.get("base_cv_text") or "")[:200000]
         title = (payload.get("title") or "").strip()
         description = (payload.get("description") or "").strip()
-        if len(description) < 40:
+        translate_fa = bool(payload.get("translate_fa"))
+        if translate_fa:
+            # FA translate reuses an existing resume; JD may be missing/short.
+            if len(description) < 40:
+                description = (
+                    "Persian translation of the existing tailored English resume. "
+                    "Do not invent new experience."
+                )
+            payload["translate_fa"] = True
+            if payload.get("application_id") is not None:
+                payload["application_id"] = int(payload["application_id"])
+            payload["previous_resume_md"] = (payload.get("previous_resume_md") or "")[:200000]
+            payload["previous_output_dir"] = (payload.get("previous_output_dir") or "")[:1024]
+            payload["resume_json"] = (payload.get("resume_json") or "")[:400000]
+            payload["evaluation_md"] = (payload.get("evaluation_md") or "")[:200000]
+        elif len(description) < 40:
             raise ValueError("codex_apply requires a job description")
         payload["title"] = title or "Target role"
         payload["description"] = description[:60000]
@@ -282,12 +330,20 @@ def enqueue_work(
 ) -> WorkJob:
     if dedupe:
         existing = find_active(db, job_type, entity_id)
+        if existing and job_type == JOB_CODEX_APPLY:
+            previous = json.loads(existing.payload_json or "{}")
+            # A different posting or action must not silently disappear into an old task.
+            keys = ("description", "application_id", "improve", "translate_fa")
+            if any(previous.get(key) != (extra or {}).get(key) for key in keys):
+                existing = None
         if existing:
             logger.info("Work job already queued id=%s type=%s entity=%s", existing.id, job_type, entity_id)
             return existing
 
     payload = build_payload(db, job_type, entity_id, extra)
+    payload["_codex_model"] = settings.codex_model
     row = WorkJob(
+        user_id=payload.get("telegram_user_id"),
         job_type=job_type,
         entity_id=entity_id,
         status="pending",
@@ -302,6 +358,17 @@ def enqueue_work(
 
 def reclaim_stale(db: Session) -> int:
     cutoff = _now() - timedelta(minutes=CLAIM_STALE_MINUTES)
+    interrupted = db.query(WorkJob).filter(WorkJob.status == "applying").all()
+    for job in interrupted:
+        stamp = job.updated_at
+        if stamp and stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        if stamp and stamp < cutoff:
+            job.status = "failed"
+            job.error_message = "Result application interrupted; review existing output before retrying"
+            job.completed_at = _now()
+    if interrupted:
+        db.commit()
     rows = (
         db.query(WorkJob)
         .filter(WorkJob.status == "claimed", WorkJob.claimed_at.isnot(None))
@@ -313,7 +380,8 @@ def reclaim_stale(db: Session) -> int:
         if claimed_at and claimed_at.tzinfo is None:
             claimed_at = claimed_at.replace(tzinfo=timezone.utc)
         if claimed_at and claimed_at < cutoff:
-            row.status = "pending"
+            row.status = "failed" if (row.attempts or 0) >= 3 else "pending"
+            row.claim_token = None
             row.claimed_by = None
             row.claimed_at = None
             row.error_message = "Reclaimed after stale claim"
@@ -336,9 +404,18 @@ def claim_next(
     row = q.order_by(WorkJob.id.asc()).first()
     if not row:
         return None
+    # Compare-and-swap acquisition: only one worker can own this pending row.
+    token = secrets.token_hex(24)
+    claimed = db.execute(update(WorkJob).where(WorkJob.id == row.id, WorkJob.status == "pending").values(
+        status="claimed", claimed_by=worker_id[:128], claimed_at=_now(), claim_token=token,
+        attempts=WorkJob.attempts + 1), execution_options={"synchronize_session": False})
+    db.commit()
+    if claimed.rowcount != 1:
+        return None
+    db.refresh(row)
     # Refresh payload with latest entity state (preserve bridge payloads)
     try:
-        if row.job_type in (JOB_VECTOR_SCREEN, JOB_CODEX_APPLY):
+        if row.job_type in (JOB_VECTOR_SCREEN, JOB_CODEX_APPLY, JOB_CV_EDIT, JOB_CODEX_TEXT):
             existing = {}
             if row.payload_json:
                 try:
@@ -354,9 +431,12 @@ def claim_next(
                 )
             else:
                 payload = build_payload(db, row.job_type, row.entity_id, existing)
+            payload.setdefault("_codex_model", settings.codex_model)
+            payload["_work_job_id"] = row.id
             row.payload_json = json.dumps(payload, ensure_ascii=False, default=str)
         else:
             payload = build_payload(db, row.job_type, row.entity_id)
+            payload["_codex_model"] = settings.codex_model
             row.payload_json = json.dumps(payload, ensure_ascii=False, default=str)
     except Exception as exc:
         row.status = "failed"
@@ -396,6 +476,7 @@ def work_job_dict(row: WorkJob) -> dict:
         "result": result,
         "error_message": row.error_message,
         "claimed_by": row.claimed_by,
+        "claim_token": row.claim_token,
         "claimed_at": row.claimed_at.isoformat() if row.claimed_at else None,
         "completed_at": row.completed_at.isoformat() if row.completed_at else None,
         "created_at": row.created_at.isoformat() if row.created_at else None,

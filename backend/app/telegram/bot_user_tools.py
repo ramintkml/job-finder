@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import uuid
 import logging
 import re
 from io import BytesIO
@@ -111,18 +112,13 @@ def _user_cv_path(telegram_user_id: int) -> Path:
 
 
 def load_user_cv_text(telegram_user_id: int) -> str | None:
-    path = _user_cv_path(telegram_user_id)
-    if path.is_file():
-        text = path.read_text(encoding="utf-8").strip()
-        return text or None
-    return None
+    from app.services.cv_service import read_cv
+    return read_cv(telegram_user_id) or None
 
 
 def save_user_cv_text(telegram_user_id: int, text: str) -> Path:
-    path = _user_cv_path(telegram_user_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text.strip(), encoding="utf-8")
-    return path
+    from app.services.cv_service import write_cv
+    return write_cv(telegram_user_id, text)
 
 
 def extract_text_from_docx_bytes(data: bytes) -> str:
@@ -160,7 +156,7 @@ def _entitlements_for(telegram_user_id: int):
     db = SessionLocal()
     try:
         user = get_user_by_telegram_id(db, telegram_user_id)
-        if not user:
+        if not user or not user.is_active:
             return None, None
         return user, user_entitlements(db, user.id)
     finally:
@@ -240,21 +236,141 @@ def send_base_cv_files(telegram_user_id: int) -> dict:
 
     text = _resolve_base_cv(telegram_user_id)
     if len(text) < 40:
-        return {"message": "رزومه پایه پیدا نشد. اول رزومه را در ربات ذخیره کنید."}
-    dest = DATA_DIR / "cv" / "generated"
+        return {"message": "رزومه پایه پیدا نشد. فایل DOCX یا متن رزومه را از گزینه زیر ذخیره کنید.", "reply_markup": cv_menu_markup()}
+    dest = DATA_DIR / "user_outputs" / str(int(telegram_user_id)) / "base_cv"
     try:
-        docx_path, pdf_path = export_base_cv_files(text, dest)
+        docx_path, pdf_path = export_base_cv_files(text, dest, allow_partial=True)
     except Exception:
         logger.exception("Base CV export failed")
         return {"message": "ساخت فایل رزومه پایه ناموفق بود."}
     return {
-        "message": "رزومه پایه (انگلیسی) — DOCX و PDF",
+        "message": "رزومه پایه آماده است." + (" ساخت PDF ناموفق بود؛ فایل Word ارسال می‌شود." if not pdf_path else ""),
         "send_documents": [
             {"path": str(docx_path), "caption": "Base CV — DOCX"},
-            {"path": str(pdf_path), "caption": "Base CV — PDF"},
+            *([{ "path": str(pdf_path), "caption": "Base CV — PDF"}] if pdf_path else []),
         ],
+        "reply_markup": cv_menu_markup(),
         "skip_improve_hint": True,
     }
+
+
+def cv_menu_markup() -> dict:
+    return kb._markup([
+        [kb._btn("➕ افزودن پروژه", "ut:cv:projects"), kb._btn("➕ سابقه کاری", "ut:cv:experience")],
+        [kb._btn("➕ مهارت", "ut:cv:skills"), kb._btn("📤 ذخیره رزومه پایه", "ut:cv:replace")],
+        [kb._btn("📄 دانلود رزومه پایه", "ut:cv:download")],
+    ])
+
+
+def start_cv_update(telegram_user_id: int, section: str = "projects") -> dict:
+    base = _resolve_base_cv(telegram_user_id)
+    if section != "replace" and len(base) < 40:
+        return {"message": "ابتدا رزومه پایه را ذخیره کنید.", "reply_markup": cv_menu_markup()}
+    from app.services.cv_service import fingerprint, read_cv
+    _pending[int(telegram_user_id)] = {
+        "flow": "cv_edit", "step": "entry", "section": section,
+        "base": base, "version": fingerprint(read_cv(telegram_user_id)),
+        "session_id": uuid.uuid4().hex, "messages": [], "skipped": [],
+    }
+    message = ("متن کامل رزومه یا فایل DOCX را بفرستید." if section == "replace" else
+        "درباره پروژه یا اطلاعات جدید، راحت و با زبان خودتان بنویسید. "
+        "هوش مصنوعی متن را متناسب با زبان رزومه تنظیم می‌کند و اگر اطلاعاتی کم باشد، از شما می‌پرسد.\n"
+        "مثلاً بگویید پروژه چیست، نقش شما چیست و چه کار کرده‌اید یا قرار است انجام دهید. "
+        "قبل از ذخیره، متن نهایی را تأیید می‌کنید؛ هیچ سابقه یا عددی حدس زده نمی‌شود.")
+    return {"message": message, "reply_markup": kb._markup([[kb._btn("لغو", "ut:cancel")]])}
+
+
+def preview_cv_update(telegram_user_id: int, text: str) -> dict:
+    from app.services.cv_service import append_entry
+    pending = pending_for(telegram_user_id)
+    if not pending or pending.get("flow") != "cv_edit":
+        return {"handled": False}
+    try:
+        updated = text.strip() if pending["section"] == "replace" else append_entry(
+            pending["base"], text, section=pending["section"])
+        if not 40 <= len(updated) <= 200000:
+            raise ValueError("Invalid CV length")
+    except ValueError:
+        return {"handled": True, "message": "متن خیلی کوتاه یا طولانی است؛ اطلاعات را دوباره بفرستید."}
+    pending.update(candidate=updated, step="confirm", preview_id=uuid.uuid4().hex[:16])
+    return {"handled": True, "message": "<b>پیش‌نمایش اطلاعات جدید</b>\n\n" + _esc(text[:3000]) +
+        "\n\nبا ذخیره، نسخه قبلی در تاریخچه نگه داشته می‌شود.",
+        "reply_markup": kb._markup([[kb._btn("✅ ذخیره", f"ut:cv:save:{pending['preview_id']}"), kb._btn("لغو", "ut:cancel")]])}
+
+
+def cv_ai_retry_markup() -> dict:
+    return kb._markup([[kb._btn("🔄 تلاش دوباره", "ut:cv:retry"), kb._btn("لغو", "ut:cancel")]])
+
+
+def finish_cv_analysis(telegram_user_id: int, payload: dict, raw: dict) -> dict:
+    from app.services.cv_ai import validate_analysis, missing_fields, render_entry, QUESTIONS, ESSENTIAL
+    pending = pending_for(telegram_user_id)
+    if not pending or pending.get("flow") != "cv_edit" or pending.get("session_id") != payload.get("session_id") or pending.get("request_id") != payload.get("request_id"):
+        return {"ignored": True}
+    analysis = validate_analysis(raw, payload)
+    pending["analysis"] = analysis
+    pending.pop("candidate", None)
+    missing = missing_fields(analysis, pending.get("skipped"))
+    if missing:
+        pending["step"] = "questions"
+        pending["missing"] = missing
+        questions = [QUESTIONS[field] for field in missing[:3]]
+        question_text = "برای کامل‌شدن اطلاعات، لطفاً این موارد را بگویید:\n\n" + "\n".join(
+            f"{i + 1}. {question}" for i, question in enumerate(questions))
+        pending["messages"].append({"role": "assistant", "content": question_text})
+        rows = []
+        if any(field not in ESSENTIAL for field in missing):
+            rows.append([kb._btn("اطلاعات بیشتری ندارم", "ut:cv:skip")])
+        rows.append([kb._btn("لغو", "ut:cancel")])
+        return {"handled": True, "message": question_text, "reply_markup": kb._markup(rows)}
+    entry = render_entry(analysis, payload["language"])
+    result = preview_cv_update(telegram_user_id, entry)
+    result["message"] = result["message"].replace("پیش‌نمایش اطلاعات جدید", "پیش‌نمایش تنظیم‌شده با هوش مصنوعی") + "\nبرای اصلاح، توضیح جدید بفرستید؛ برای ثبت، «ذخیره» را بزنید."
+    return result
+
+
+async def handle_cv_ai_text(telegram_user_id: int, text: str | None = None) -> dict:
+    from app.services.cv_ai import api_available, analyze_with_api, entry_language
+    pending = pending_for(telegram_user_id)
+    if not pending or pending.get("flow") != "cv_edit" or pending.get("section") == "replace":
+        return {"handled": False}
+    if pending.get("step") == "analyzing":
+        return {"handled": True, "message": "اطلاعات در حال بررسی است؛ برای نتیجه صبر کنید یا «لغو» را بزنید."}
+    messages = pending.setdefault("messages", [])
+    if text is not None:
+        if not 2 <= len(text.strip()) <= 12000 or len(messages) >= 30 or sum(len(m["content"]) for m in messages) + len(text) > 30000:
+            return {"handled": True, "message": "لطفاً اطلاعات را کوتاه‌تر بنویسید. اگر گفت‌وگو طولانی شده، دوباره از افزودن پروژه شروع کنید."}
+        messages.append({"role": "user", "content": text.strip()})
+    if not any(m["role"] == "user" for m in messages):
+        return {"handled": True, "message": "ابتدا توضیح پروژه را بفرستید."}
+    pending.pop("candidate", None)
+    pending["step"] = "analyzing"
+    pending["request_id"] = uuid.uuid4().hex
+    payload = {"telegram_user_id": int(telegram_user_id), "chat_id": int(telegram_user_id),
+               "session_id": pending["session_id"], "request_id": pending["request_id"],
+               "section": pending["section"], "language": entry_language(pending["base"]),
+               "messages": [dict(m) for m in messages]}
+    try:
+        if api_available():
+            analysis = await analyze_with_api(payload)
+            result = finish_cv_analysis(telegram_user_id, payload, analysis)
+            return result if not result.get("ignored") else {"handled": True}
+        from app.worker.queue import JOB_CV_EDIT, enqueue_work, worker_status
+        with SessionLocal() as db:
+            status = worker_status(db)
+            work = enqueue_work(db, JOB_CV_EDIT, int(telegram_user_id), extra=payload, dedupe=False)
+        line = "هوش مصنوعی در حال تنظیم اطلاعات پروژه است؛ نتیجه و سؤال‌های تکمیلی همین‌جا ارسال می‌شود."
+        if not status.get("worker_online"):
+            line = "درخواست ذخیره شد؛ PC Worker آفلاین است. launch.bat را اجرا کنید تا هوش مصنوعی اطلاعات را بررسی کند."
+        return {"handled": True, "message": line + f"\nشناسه درخواست: #{work.id}",
+                "reply_markup": kb._markup([[kb._btn("لغو", "ut:cancel")]])}
+    except Exception:
+        logger.exception("CV interview request failed for user %s", telegram_user_id)
+        if pending_for(telegram_user_id) is not pending:
+            return {"handled": True}
+        pending["step"] = "ai_error"
+        return {"handled": True, "message": "ارتباط با هوش مصنوعی یا پردازش پاسخ انجام نشد؛ اطلاعات شما حفظ شده. دوباره تلاش کنید.",
+                "reply_markup": cv_ai_retry_markup()}
 
 
 def _bool_icon(v: bool) -> str:
@@ -277,6 +393,10 @@ def _resolve_base_cv(telegram_user_id: int, *, pending: dict | None = None) -> s
     if saved and len(saved) >= 40:
         return saved
     if _is_admin_user(telegram_user_id):
+        from app.worker.codex_apply import _job_search_root
+        local_cv = _job_search_root() / "documents" / "base_cv.txt"
+        if local_cv.is_file():
+            return local_cv.read_text(encoding="utf-8").strip()
         try:
             from app.ats.tailor import load_base_cv_text
 
@@ -322,6 +442,8 @@ def start_apply(telegram_user_id: int, *, chat_id: int | None = None) -> dict:
 
     cancel_kb = kb._markup([[kb._btn("لغو", "ut:cancel")]])
     base = _resolve_base_cv(telegram_user_id)
+    if len(base) < 40 and not is_admin:
+        return {"message": "ابتدا رزومه پایه را ذخیره کنید.", "reply_markup": cv_menu_markup()}
     # Codex uses Job Search profile/; local CV still helpful context for fallback
     _pending[int(telegram_user_id)] = {
         "flow": "apply_codex",
@@ -502,6 +624,39 @@ def start_combined(telegram_user_id: int) -> dict:
 
 async def handle_tool_callback(data: str, *, telegram_user_id: int) -> dict:
     """Handle ut:* callbacks (user tools)."""
+    if data.startswith("ut:cv:"):
+        parts = data.split(":")
+        action = parts[2]
+        if action == "download":
+            import asyncio
+            return await asyncio.to_thread(send_base_cv_files, telegram_user_id)
+        if action == "retry":
+            return await handle_cv_ai_text(telegram_user_id)
+        if action == "skip":
+            from app.services.cv_ai import ESSENTIAL, FIELDS, entry_language
+            pending = pending_for(telegram_user_id)
+            if not pending or pending.get("flow") != "cv_edit" or pending.get("step") != "questions" or not pending.get("analysis"):
+                return {"message": "سؤال فعالی پیدا نشد؛ دوباره از افزودن پروژه شروع کنید."}
+            pending["skipped"] = [field for field in FIELDS if field not in ESSENTIAL]
+            return finish_cv_analysis(telegram_user_id, {
+                "session_id": pending["session_id"], "request_id": pending["request_id"],
+                "messages": pending["messages"], "language": entry_language(pending["base"]),
+            }, pending["analysis"])
+        if action == "save":
+            from app.services.cv_service import write_cv
+            pending = pending_for(telegram_user_id)
+            if not pending or pending.get("flow") != "cv_edit" or pending.get("step") != "confirm" or not pending.get("candidate") or len(parts) != 4 or parts[3] != pending.get("preview_id"):
+                return {"message": "پیش‌نمایش منقضی شده؛ دوباره شروع کنید.", "reply_markup": cv_menu_markup()}
+            try:
+                write_cv(telegram_user_id, pending["candidate"], expected=pending["version"])
+            except (ValueError, FileExistsError):
+                clear_pending(telegram_user_id)
+                return {"message": "رزومه هم‌زمان تغییر کرده؛ دوباره شروع کنید.", "reply_markup": cv_menu_markup()}
+            clear_pending(telegram_user_id)
+            return {"message": "✅ رزومه پایه به‌روز شد. درخواست‌های بعدی از این نسخه استفاده می‌کنند.", "reply_markup": cv_menu_markup()}
+        if action in ("projects", "experience", "skills", "replace"):
+            return start_cv_update(telegram_user_id, action)
+        return {"toast": "گزینه نامعتبر"}
     if data == "ut:cancel":
         if pending_for(telegram_user_id) is None:
             return {"toast": "چیزی برای لغو نیست"}
@@ -668,10 +823,7 @@ async def _handle_improve_codex(data: str, *, telegram_user_id: int) -> dict:
 async def _handle_translate_fa(data: str, *, telegram_user_id: int) -> dict:
     import json
 
-    from app.ats.docx_export import export_resume_docx_fa
-    from app.ats.pdf_export import export_resume_pdf_fa
-    from app.ats.translate_fa import translate_resume_to_persian
-    from app.config import ATS_DIR
+    from app.worker.queue import JOB_CODEX_APPLY, enqueue_work, worker_status
 
     try:
         app_id = int(data.rsplit(":", 1)[-1])
@@ -687,6 +839,11 @@ async def _handle_translate_fa(data: str, *, telegram_user_id: int) -> dict:
                 "alert": True,
                 "message": "❌ این رزومه پیدا نشد یا متعلق به شما نیست.",
             }
+
+        resume_md = (app.resume_md or "").strip()
+        if not resume_md and app.resume_docx_path:
+            # Fall back to structured JSON if markdown missing
+            pass
         try:
             en = _parse_resume_struct(app)
         except Exception as exc:
@@ -696,149 +853,82 @@ async def _handle_translate_fa(data: str, *, telegram_user_id: int) -> dict:
                 "message": f"❌ رزومه انگلیسی برای ترجمه موجود نیست.\n<code>{html.escape(str(exc)[:120])}</code>",
             }
 
-        try:
-            fa = await translate_resume_to_persian(en)
-        except Exception as exc:
-            logger.exception("FA translate failed for app %s", app_id)
-            return {
-                "toast": "خطای ترجمه",
-                "alert": True,
-                "message": f"❌ ترجمه فارسی ناموفق بود.\n<code>{html.escape(str(exc)[:160])}</code>",
-            }
+        if not resume_md:
+            # Minimal markdown seed from structured fields so Codex has a source
+            bits = [
+                str(en.get("full_name") or "Ramin Takmil"),
+                str(en.get("professional_title") or ""),
+                " | ".join(
+                    x
+                    for x in [
+                        en.get("email"),
+                        en.get("phone"),
+                    ]
+                    if x
+                ),
+                " | ".join(
+                    x
+                    for x in [
+                        en.get("linkedin"),
+                        en.get("github"),
+                        en.get("location"),
+                    ]
+                    if x
+                ),
+                "",
+                "## Professional Summary",
+                str(en.get("summary") or ""),
+            ]
+            resume_md = "\n".join(bits)
 
-        out_dir = Path(ATS_DIR) / "applications" / str(app.id)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        from app.ats.naming import resume_filename, sanitize_job_title
-
-        job_title = sanitize_job_title(app.title or "Role", max_len=60)
-        fa_docx = out_dir / resume_filename(lang="fa", job_title=job_title, ext="docx")
-        fa_pdf = out_dir / resume_filename(lang="fa", job_title=job_title, ext="pdf")
-        # Keep legacy aliases for older buttons/paths
-        legacy_fa_docx = out_dir / "resume_fa.docx"
-        legacy_fa_pdf = out_dir / "resume_fa.pdf"
-        export_resume_docx_fa(fa, fa_docx)
-        if fa_docx.is_file():
-            legacy_fa_docx.write_bytes(fa_docx.read_bytes())
-        pdf_ok = False
-        try:
-            export_resume_pdf_fa(fa, fa_pdf)
-            pdf_ok = fa_pdf.is_file()
-            if pdf_ok:
-                legacy_fa_pdf.write_bytes(fa_pdf.read_bytes())
-        except Exception:
-            logger.exception("FA PDF export failed for app %s", app_id)
-
-        app.resume_fa_json = json.dumps(fa, ensure_ascii=False, default=str)[:400000]
-        if fa_docx.is_file():
-            app.resume_fa_docx_path = str(fa_docx)
-        if pdf_ok:
-            app.resume_fa_pdf_path = str(fa_pdf)
-        # Ensure EN PDF exists too (for dual PDF buttons)
-        if not (app.resume_pdf_path and Path(app.resume_pdf_path).is_file()):
-            try:
-                from app.ats.pdf_export import export_resume_pdf
-
-                en_pdf = out_dir / resume_filename(lang="en", job_title=job_title, ext="pdf")
-                export_resume_pdf(en, en_pdf)
-                if en_pdf.is_file():
-                    app.resume_pdf_path = str(en_pdf)
-                    (out_dir / "resume.pdf").write_bytes(en_pdf.read_bytes())
-            except Exception:
-                logger.exception("EN PDF backfill failed for app %s", app_id)
-        if not app.resume_json:
-            app.resume_json = json.dumps(en, ensure_ascii=False, default=str)[:400000]
-
-        # Sync FA artifacts into the PC Job Search applications folder via worker
-        sync_note = ""
-        pc_out = (app.output_dir or "").strip()
-        if pc_out and fa_docx.is_file():
-            try:
-                import base64
-
-                from app.worker.queue import JOB_SAVE_FILES, enqueue_work, worker_status
-
-                files_b64: dict[str, str] = {
-                    fa_docx.name: base64.b64encode(fa_docx.read_bytes()).decode("ascii"),
-                    # legacy names too
-                    "resume_fa.docx": base64.b64encode(fa_docx.read_bytes()).decode("ascii"),
-                }
-                if pdf_ok:
-                    files_b64[fa_pdf.name] = base64.b64encode(fa_pdf.read_bytes()).decode(
-                        "ascii"
-                    )
-                    files_b64["resume_fa.pdf"] = files_b64[fa_pdf.name]
-                html_side = fa_pdf.with_suffix(".html")
-                if html_side.is_file():
-                    files_b64[html_side.name] = base64.b64encode(
-                        html_side.read_bytes()
-                    ).decode("ascii")
-                files_b64["resume_fa.json"] = base64.b64encode(
-                    app.resume_fa_json.encode("utf-8")
-                ).decode("ascii")
-                work = enqueue_work(
-                    db,
-                    JOB_SAVE_FILES,
-                    int(telegram_user_id),
-                    extra={
-                        "output_dir": pc_out,
-                        "files": files_b64,
-                        "application_id": app.id,
-                    },
-                    dedupe=False,
-                )
-                ws = worker_status(db)
-                if ws.get("worker_online"):
-                    sync_note = (
-                        f"\n📁 در حال ذخیره در پوشه PC "
-                        f"(صف <code>#{work.id}</code>)…"
-                    )
-                else:
-                    sync_note = (
-                        "\n⚠️ برای ذخیره در پوشه Job Search روی PC، "
-                        "<code>launch.bat</code> را اجرا کنید "
-                        f"(صف <code>#{work.id}</code>)."
-                    )
-            except Exception as exc:
-                logger.exception("Failed enqueueing FA file sync for app %s", app_id)
-                sync_note = f"\n⚠️ ذخیره PC صف نشد: <code>{html.escape(str(exc)[:120])}</code>"
-        elif not pc_out:
-            sync_note = (
-                "\nℹ️ مسیر پوشه PC برای این شغل ذخیره نشده "
-                "(فقط خروجی‌های Codex /apply همگام می‌شوند)."
+        description = (app.description or "").strip()
+        if len(description) < 40:
+            description = (
+                "Persian translation of the existing tailored English resume. "
+                "Do not invent new experience."
             )
 
+        app.status = "translating_fa"
         db.commit()
-        db.refresh(app)
-        markup = application_actions_markup(app)
-        docs: list[dict[str, str]] = []
-        if fa_docx.is_file():
-            docs.append(
-                {
-                    "path": str(fa_docx),
-                    "caption": f"{fa_docx.name} (RTL · B Nazanin)",
-                }
-            )
-        if pdf_ok:
-            docs.append(
-                {
-                    "path": str(fa_pdf),
-                    "caption": f"{fa_pdf.name} (HTML→PDF · B Nazanin)",
-                }
-            )
-        return {
-            "toast": "ترجمه آماده",
-            "message": (
-                "✅ <b>ترجمه فارسی</b> آماده شد (DOCX راست‌چین · فونت B Nazanin).\n"
-                "PDF از HTML ساخته می‌شود تا جملات و بولت‌ها درست بمانند.\n"
-                "حالا دکمه <b>PDF فارسی</b> هم فعال است."
-                f"{sync_note}"
-            ),
-            "reply_markup": markup,
-            "send_documents": docs,
-            "skip_improve_hint": True,
-        }
+
+        ws = worker_status(db)
+        work = enqueue_work(
+            db,
+            JOB_CODEX_APPLY,
+            int(telegram_user_id),
+            extra={
+                "title": app.title or "Target role",
+                "company": app.company or "",
+                "job_url": app.job_url or "",
+                "description": description,
+                "chat_id": int(telegram_user_id),
+                "telegram_user_id": int(telegram_user_id),
+                "translate_fa": True,
+                "application_id": app.id,
+                "previous_resume_md": resume_md[:200000],
+                "previous_output_dir": app.output_dir or "",
+                "resume_json": json.dumps(en, ensure_ascii=False, default=str)[:400000],
+                "evaluation_md": (app.evaluation_md or "")[:200000],
+            },
+            dedupe=False,
+        )
     finally:
         db.close()
+
+    online = bool(ws.get("worker_online"))
+    msg = (
+        "⏳ درخواست <b>ترجمه فارسی</b> به صف <b>Codex</b> اضافه شد "
+        f"(نه Groq).\nشناسه صف: <code>#{work.id}</code>\n"
+        "Codex روی PC ترجمه را می‌سازد و DOCX/PDF را می‌فرستد.\n\n"
+    )
+    if online:
+        msg += "PC Worker آنلاین است — چند دقیقه صبر کنید."
+    else:
+        msg += (
+            "⚠️ PC Worker آفلاین است.\n"
+            "روی PC فایل <code>launch.bat</code> را اجرا کنید."
+        )
+    return {"toast": "ترجمه صف شد (Codex)", "message": msg}
 
 
 async def _handle_pdf(data: str, *, telegram_user_id: int, lang: str) -> dict:
@@ -982,6 +1072,11 @@ async def handle_document(
     if len(text) < 40:
         return {"handled": True, "message": "❌ متن استخراج‌شده از DOCX خیلی کوتاه است."}
 
+    if pending.get("flow") == "cv_edit":
+        if pending.get("section") != "replace":
+            return {"handled": True, "message": "برای افزودن اطلاعات، متن را بفرستید؛ برای جایگزینی فایل از ذخیره رزومه پایه استفاده کنید."}
+        return preview_cv_update(telegram_user_id, text)
+
     flow = pending.get("flow")
     cancel_kb = kb._markup([[kb._btn("لغو", "ut:cancel")]])
     if flow in ("ai", "combined", "apply"):
@@ -1024,6 +1119,11 @@ async def handle_text(*, telegram_user_id: int, text: str) -> dict:
     if raw.lower() in ("cancel", "/cancel", "لغو", "انصراف"):
         clear_pending(telegram_user_id)
         return {"handled": True, "message": "لغو شد."}
+
+    if pending.get("flow") == "cv_edit":
+        if pending.get("section") == "replace":
+            return preview_cv_update(telegram_user_id, raw)
+        return await handle_cv_ai_text(telegram_user_id, raw)
 
     if pending.get("step") == "cv":
         return {
@@ -1088,6 +1188,7 @@ async def handle_text(*, telegram_user_id: int, text: str) -> dict:
                     "company": job_company,
                     "job_url": job_url,
                     "description": description,
+                    "base_cv_text": pending.get("cv_text") or _resolve_base_cv(telegram_user_id),
                     "chat_id": chat,
                     "telegram_user_id": int(telegram_user_id),
                 },
@@ -1108,7 +1209,7 @@ async def handle_text(*, telegram_user_id: int, text: str) -> dict:
                 "⚠️ PC Worker آفلاین است.\n"
                 "۱) تونل SSH را روشن کنید\n"
                 "۲) <code>launch.bat</code> را اجرا کنید\n"
-                "۳) اگر لازم است: <code>agent login</code> یا CURSOR_API_KEY"
+                "۳) اگر لازم است: <code>codex login</code>"
             )
         return {"handled": True, "message": msg}
 

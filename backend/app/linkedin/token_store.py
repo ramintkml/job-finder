@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.database import AppSettings
+from app.services.credentials import seal, unseal
 
 _KEYS = (
     "linkedin_access_token",
@@ -21,10 +22,18 @@ _KEYS = (
 
 def _get(db: Session, key: str) -> str:
     row = db.get(AppSettings, key)
-    return row.value if row and row.value else ""
+    value = row.value if row and row.value else ""
+    if key in ("linkedin_access_token", "linkedin_refresh_token"):
+        if value and not value.startswith("enc:v1:"):
+            row.value = seal(value)
+            db.commit()
+        return unseal(value)
+    return value
 
 
 def _set(db: Session, key: str, value: str) -> None:
+    if key in ("linkedin_access_token", "linkedin_refresh_token"):
+        value = seal(value)
     row = db.get(AppSettings, key)
     if row:
         row.value = value

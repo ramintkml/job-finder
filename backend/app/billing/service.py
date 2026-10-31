@@ -58,9 +58,6 @@ def get_or_create_user(
     if first_name is not None and user.first_name != first_name:
         user.first_name = first_name[:128] or None
         changed = True
-    if not user.is_active:
-        user.is_active = True
-        changed = True
     if changed:
         user.updated_at = now
         db.commit()

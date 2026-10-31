@@ -31,7 +31,7 @@ def main_reply_keyboard(
     return {
         "keyboard": [
             [{"text": "📋 ارسال آگهی"}, {"text": "🖥 PC Worker"}],
-            [{"text": "📄 رزومه پایه"}],
+            [{"text": "📄 رزومه پایه"}, {"text": "➕ افزودن پروژه"}],
         ],
         "resize_keyboard": True,
         "is_persistent": True,

@@ -99,9 +99,16 @@ def _looks_like_link_tail(text: str) -> bool:
     )
 
 
+def _strip_inline_md(text: str) -> str:
+    """Remove bold/italic/code markers Codex sometimes wraps around titles."""
+    s = (text or "").strip()
+    s = re.sub(r"\*+|_+|`+", "", s)
+    return s.strip()
+
+
 def _looks_like_project_title(line: str) -> bool:
     """Plain 'Name — github/url' lines start a new project (not a bullet)."""
-    s = (line or "").strip()
+    s = _strip_inline_md(line)
     if not s or s.startswith(("-", "*", "•")):
         return False
     if not re.search(r"\s+[—\-–]\s+", s):
@@ -111,14 +118,14 @@ def _looks_like_project_title(line: str) -> bool:
 
 def _looks_like_role_title(line: str) -> bool:
     """Plain 'Title — Company | Location | dates' starts a new experience role."""
-    s = (line or "").strip()
+    s = _strip_inline_md(line)
     if not s or s.startswith(("-", "*", "•")):
         return False
     if "|" in s and re.search(r"\d{4}|Present|months?", s, re.I):
         return True
     if re.match(r"^[A-Z][A-Za-z0-9 /&+().-]{2,60}\s+[—–-]\s+\S+", s) and len(s) <= 140:
         if re.search(
-            r"Developer|Engineer|Specialist|Manager|Assistant|Lead|Intern|Consultant",
+            r"Developer|Engineer|Specialist|Manager|Assistant|Lead|Intern|Consultant|Teacher|Teaching",
             s,
             re.I,
         ):
@@ -127,8 +134,9 @@ def _looks_like_role_title(line: str) -> bool:
 
 
 def _parse_role_line(line: str) -> dict[str, Any]:
-    bits = [b.strip() for b in re.split(r"\s*\|\s*", line)]
-    left = bits[0] if bits else line
+    clean = _strip_inline_md(line)
+    bits = [b.strip() for b in re.split(r"\s*\|\s*", clean)]
+    left = bits[0] if bits else clean
     parts = re.split(r"\s+[—–-]\s+", left, maxsplit=1)
     dates = ""
     location = ""
@@ -317,6 +325,11 @@ def markdown_resume_to_dict(markdown: str) -> dict[str, Any]:
 
     name = ""
     title = ""
+    email = ""
+    phone = ""
+    linkedin = ""
+    github = ""
+    location = ""
     summary_parts: list[str] = []
     skills: dict[str, list[str]] = {}
     experience: list[dict[str, Any]] = []
@@ -442,22 +455,41 @@ def markdown_resume_to_dict(markdown: str) -> dict[str, Any]:
             body = re.sub(r"^([\-\*\u2022•]|\d+[.)])\s+", "", line).strip()
 
         if section == "header":
+            clean = _strip_inline_md(body)
+            low = clean.lower()
+            if "@" in clean or "linkedin" in low or "github" in low or re.search(
+                r"\+?\d[\d\s\-()]{6,}", clean
+            ):
+                for part in [p.strip() for p in clean.split("|")]:
+                    pl = part.lower()
+                    if "@" in part and not email:
+                        email = part
+                    elif re.search(r"\+?\d[\d\s\-()]{6,}", part) and not phone:
+                        phone = part
+                    elif "linkedin" in pl and not linkedin:
+                        linkedin = re.sub(r"^https?://(www\.)?", "", part, flags=re.I).rstrip("/")
+                    elif "github" in pl and not github:
+                        github = re.sub(r"^https?://(www\.)?", "", part, flags=re.I).rstrip("/")
+                    elif re.search(r"(remote|iran|australia|germany|usa|uk)", part, re.I) and not location:
+                        location = part
+                continue
             if not name:
-                name = body
-            elif not title and len(body) < 120 and "@" not in body:
-                title = body
+                name = clean
+            elif not title and len(clean) < 120:
+                title = clean
             continue
         if section == "summary":
-            summary_parts.append(body)
+            summary_parts.append(_strip_inline_md(body) if "**" in body or "__" in body else body)
             continue
         if section == "skills":
-            if ":" in body:
-                cat, rest = body.split(":", 1)
-                items = [x.strip() for x in re.split(r"[,|/]", rest) if x.strip()]
+            clean = _strip_inline_md(body)
+            if ":" in clean:
+                cat, rest = clean.split(":", 1)
+                items = [x.strip() for x in re.split(r"[,;/|]", rest) if x.strip()]
                 if cat.strip():
                     skills[cat.strip()] = items
             else:
-                items = [x.strip() for x in re.split(r"[,|/]", body) if x.strip()]
+                items = [x.strip() for x in re.split(r"[,;/|]", clean) if x.strip()]
                 if items:
                     skills.setdefault("Skills", []).extend(items)
             continue
@@ -544,6 +576,11 @@ def markdown_resume_to_dict(markdown: str) -> dict[str, Any]:
     return {
         "full_name": name,
         "professional_title": title,
+        "email": email,
+        "phone": phone,
+        "linkedin": linkedin,
+        "github": github,
+        "location": location,
         "summary": " ".join(summary_parts).strip() or text[:800],
         "skills": skills,
         "experience": experience,

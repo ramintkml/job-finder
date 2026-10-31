@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 _pending_edits: dict[str, dict[str, str]] = {}
 
-PROVIDERS = ("groq", "gemini", "deepseek", "openai", "anthropic")
+PROVIDERS = ("codex",)
 
 # Short callback field codes -> (category, setting_key, label, type)
 FIELDS: dict[str, tuple[str, str, str, str]] = {
@@ -140,9 +140,8 @@ def _render_ai() -> tuple[str, dict]:
         f"پیش‌فرض: <b>{_esc(settings.ai_provider)}</b>\n"
         f"غربالگری: <b>{_esc(settings.screening_provider)}</b> / {_esc(settings.screening_model())}\n"
         f"نوشتن: <b>{_esc(settings.proposal_provider)}</b> / {_esc(settings.proposal_model())}\n\n"
-        "برای تغییر ارائه‌دهنده روی دکمه بزنید "
-        "(کلید API را در .env بگذارید).\n"
-        "همچنین از «مدیریت فروش» می‌توانید ارائه‌دهنده را عوض کنید."
+        "همه قابلیت‌های AI با Codex اجرا می‌شوند.\n"
+        "روی PC با codex login وارد شوید و PC Worker را روشن کنید."
     )
     rows = [
         [kb._btn(f"غربالگری: {settings.screening_provider}", "s:e:scr")],

@@ -57,6 +57,12 @@ def _rag_chroma_ready() -> bool:
         return False
 
 
+def _operator_cv_text() -> str:
+    from app.worker.codex_apply import _job_search_root
+    source = _job_search_root() / "documents" / "base_cv.txt"
+    return source.read_text(encoding="utf-8")[:200000] if source.is_file() else ""
+
+
 async def _heartbeat(client: httpx.AsyncClient, worker_id: str) -> None:
     r = await client.post(
         f"{_base_url()}/api/worker/heartbeat",
@@ -64,6 +70,7 @@ async def _heartbeat(client: httpx.AsyncClient, worker_id: str) -> None:
         json={
             "worker_id": worker_id,
             "name": socket.gethostname(),
+            "operator_cv_text": _operator_cv_text(),
             "telethon_connected": False,
             "telethon_needs_auth": False,
             "rag_chroma": _rag_chroma_ready(),
@@ -90,27 +97,28 @@ async def _claim(client: httpx.AsyncClient, worker_id: str) -> dict | None:
     return data.get("job")
 
 
-async def _complete(client: httpx.AsyncClient, job_id: int, result: dict) -> None:
+async def _complete(client: httpx.AsyncClient, job_id: int, result: dict, job: dict) -> None:
     r = await client.post(
         f"{_base_url()}/api/worker/jobs/{job_id}/complete",
         headers=_headers(),
-        json={"ok": True, "result": result},
+        json={"ok": True, "result": result, "worker_id": job["claimed_by"], "claim_token": job["claim_token"]},
         timeout=120,
     )
     r.raise_for_status()
 
 
-async def _fail(client: httpx.AsyncClient, job_id: int, error: str) -> None:
+async def _fail(client: httpx.AsyncClient, job_id: int, error: str, job: dict) -> None:
     r = await client.post(
         f"{_base_url()}/api/worker/jobs/{job_id}/complete",
         headers=_headers(),
-        json={"ok": False, "error": error},
+        json={"ok": False, "error": error, "worker_id": job["claimed_by"], "claim_token": job["claim_token"]},
         timeout=60,
     )
     r.raise_for_status()
 
 
 async def run_forever() -> None:
+    settings.codex_execution_mode = "local"
     worker_id = _worker_id()
     poll = max(1.0, float(settings.worker_poll_seconds or 3))
     logger.info(
@@ -137,7 +145,8 @@ async def run_forever() -> None:
                     await _fail(
                         client,
                         job_id,
-                        "Bids run on the VPS now — discard this queued job and use Send bid again",
+                        "Freelancer bidding is no longer supported",
+                        job,
                     )
                     continue
 
@@ -145,13 +154,25 @@ async def run_forever() -> None:
                     # Codex apply can take several minutes
                     if job_type == JOB_CODEX_APPLY:
                         logger.info("Running Codex apply bridge for job #%s", job_id)
-                    result = await execute_job(job_type, payload)
-                    await _complete(client, job_id, result)
+                    async def keep_alive():
+                        while True:
+                            await asyncio.sleep(15)
+                            try:
+                                await _heartbeat(client, worker_id)
+                            except httpx.HTTPError:
+                                logger.warning("Heartbeat failed during job %s", job_id)
+                    pulse = asyncio.create_task(keep_alive())
+                    try:
+                        result = await execute_job(job_type, payload)
+                    finally:
+                        pulse.cancel()
+                        await asyncio.gather(pulse, return_exceptions=True)
+                    await _complete(client, job_id, result, job)
                     logger.info("Completed job #%s", job_id)
                 except Exception as exc:
                     logger.exception("Job #%s failed", job_id)
                     try:
-                        await _fail(client, job_id, str(exc))
+                        await _fail(client, job_id, str(exc), job)
                     except Exception:
                         logger.exception("Failed to report job #%s failure", job_id)
 

@@ -1,7 +1,8 @@
 import json
 import re
 
-from app.ai.evaluator import _call_openai_compatible, _resolve_provider_call, load_guide
+from app.ai.evaluator import load_guide
+from app.ai.codex import call_codex_sync
 from app.config import settings
 from app.linkedin.settings import DEFAULT_EMAIL_TEMPLATE, LinkedInSettings
 
@@ -51,19 +52,7 @@ def _extract_json(text: str) -> dict:
 
 
 def _call_ai(system: str, user: str) -> str:
-    provider = settings.proposal_provider
-    api_key, base_url = _resolve_provider_call(provider)
-    model = settings.proposal_model()
-    return _call_openai_compatible(
-        system,
-        user,
-        api_key=api_key,
-        model=model,
-        provider=provider,
-        base_url=base_url,
-        max_tokens=768,
-        json_mode=True,
-    )
+    return call_codex_sync(system, user)
 
 
 def _template_placeholders(template: str) -> list[str]:

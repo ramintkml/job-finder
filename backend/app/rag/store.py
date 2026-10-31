@@ -11,14 +11,8 @@ logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "profile_knowledge"
 
-try:
-    import chromadb
-
-    _CHROMA_OK = True
-except ImportError:
-    chromadb = None  # type: ignore
-    _CHROMA_OK = False
-    logger.info("chromadb not installed — using lean numpy TF-IDF index")
+chromadb = None
+_CHROMA_OK = False  # Codex-only AI policy: deterministic TF-IDF retrieval.
 
 
 def chroma_available() -> bool:

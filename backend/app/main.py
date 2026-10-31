@@ -3,7 +3,9 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi.responses import JSONResponse
+from app.api.auth import router as auth_router, require_admin
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
@@ -80,9 +82,11 @@ async def lifespan(app: FastAPI):
 
     # Telethon user-client (Freelancer bid bot) is no longer started.
     # LinkedIn auto-search/polling disabled — jobs come from Telegram /apply only.
-    asyncio.create_task(start_review_bot())
-    asyncio.create_task(_system_alert_loop())
+    tasks = [asyncio.create_task(start_review_bot()), asyncio.create_task(_system_alert_loop())]
     yield
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
     try:
         from app.telegram.bot import review_bot
 
@@ -107,18 +111,31 @@ app = FastAPI(title="LinkedIn Job Finder", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(router, prefix="/api")
-app.include_router(pre_match_router, prefix="/api")
-app.include_router(linkedin_router, prefix="/api")
-app.include_router(ats_router, prefix="/api")
+@app.middleware("http")
+async def same_origin_writes(request: Request, call_next):
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path.startswith("/api/"):
+        origin = request.headers.get("origin")
+        if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
+            return JSONResponse({"detail": "Invalid origin"}, status_code=403)
+    return await call_next(request)
+
+
+# Retired fork routes are deliberately absent from the deployed API.
+router.routes[:] = [route for route in router.routes if not any(
+    route.path.startswith(prefix) for prefix in ("/projects", "/freelancer", "/telegram", "/automation", "/test"))]
+app.include_router(auth_router, prefix="/api")
+app.include_router(router, prefix="/api", dependencies=[Depends(require_admin)])
+app.include_router(pre_match_router, prefix="/api", dependencies=[Depends(require_admin)])
+app.include_router(linkedin_router, prefix="/api", dependencies=[Depends(require_admin)])
+app.include_router(ats_router, prefix="/api", dependencies=[Depends(require_admin)])
 app.include_router(applications_router, prefix="/api")
-app.include_router(rag_router, prefix="/api")
+app.include_router(rag_router, prefix="/api", dependencies=[Depends(require_admin)])
 app.include_router(worker_router, prefix="/api")
 
 
@@ -132,6 +149,10 @@ def api_write_fallback(path: str):
 def health():
     return {
         "status": "ok",
+        "revision": settings.deployment_revision,
+        "ai_engine": "codex",
+        "revision": settings.deployment_revision,
+        "ai_engine": "codex",
         "telegram_connected": telegram_service.connected,
         "telegram_needs_auth": telegram_service.needs_auth,
         "ui_mode": _ui_mode(),
@@ -142,7 +163,7 @@ def health():
 def frontend_assets(file_path: str):
     path = (FRONTEND_DIST / "assets" / file_path).resolve()
     assets_root = (FRONTEND_DIST / "assets").resolve()
-    if not str(path).startswith(str(assets_root)) or not path.is_file():
+    if not path.is_relative_to(assets_root) or not path.is_file():
         raise HTTPException(status_code=404, detail="Asset not found")
     return FileResponse(path)
 
@@ -170,8 +191,8 @@ def spa(full_path: str):
     if full_path:
         # Prefer dist files, then static fallback root files
         for root in (FRONTEND_DIST, STATIC_FALLBACK):
-            candidate = root / full_path
-            if candidate.is_file():
+            candidate = (root / full_path).resolve()
+            if candidate.is_relative_to(root.resolve()) and candidate.is_file():
                 media = _PWA_ROOT_FILES.get(candidate.name)
                 return FileResponse(candidate, media_type=media) if media else FileResponse(candidate)
         root_name = full_path.split("/")[-1]

@@ -28,7 +28,7 @@ from app.telegram import keyboards as kb
 
 logger = logging.getLogger(__name__)
 
-PROVIDERS = ("groq", "gemini", "deepseek", "openai", "anthropic")
+PROVIDERS = ("codex",)
 
 # Provider role code -> (settings attr, persist key, Farsi label)
 AI_ROLES: dict[str, tuple[str, str, str]] = {
@@ -78,96 +78,24 @@ def _esc(v: Any) -> str:
 
 
 def _api_key_for_provider(provider: str) -> str:
-    p = (provider or "").lower().strip()
-    if p == "groq":
-        return settings.groq_api_key
-    if p == "gemini":
-        return settings.gemini_api_key
-    if p == "deepseek":
-        return settings.deepseek_api_key
-    if p == "openai":
-        return settings.openai_api_key
-    if p == "anthropic":
-        return settings.anthropic_api_key
     return ""
 
 
 def _ai_key_status_lines() -> str:
-    providers = [
-        ("پیش‌فرض", settings.ai_provider),
-        ("غربالگری", settings.screening_provider),
-        ("پیشنهاد/نوشتن", settings.proposal_provider),
-    ]
-    lines = ["<b>🤖 وضعیت کلید AI (از .env)</b>"]
-    seen: set[str] = set()
-    for label, provider in providers:
-        p = (provider or "").lower().strip() or "—"
-        if p in seen and label != "پیش‌فرض":
-            # still show if different role uses same provider once
-            pass
-        seen.add(p)
-        key = _api_key_for_provider(p)
-        icon = "✅" if key.strip() else "❌"
-        lines.append(
-            f"{icon} {label}: <b>{_esc(p)}</b> — کلید {'ست شده' if key.strip() else 'نیست'}"
-        )
-    lines.append("<i>برای تست زنده، دکمه «بررسی اتصال AI» را بزنید.</i>")
-    return "\n".join(lines)
+    return ("<b>🤖 هوش مصنوعی: Codex</b>\n"
+            f"مدل: <code>{_esc(settings.proposal_model())}</code>\n"
+            "همه قابلیت‌ها از Codex استفاده می‌کنند. ورود با codex login روی PC انجام می‌شود؛ کلید سرویس دیگری لازم نیست.")
 
 
 async def _live_ai_test() -> str:
-    """Ping configured screening + proposal providers with a tiny prompt."""
-    from app.ai.evaluator import (
-        _call_anthropic,
-        _call_openai_compatible,
-        _resolve_provider_call,
-    )
-
-    lines = ["<b>🔌 نتیجه تست زنده AI</b>", ""]
-    checks = [
-        ("غربالگری", settings.screening_provider, settings.screening_model()),
-        ("پیشنهاد/نوشتن", settings.proposal_provider, settings.proposal_model()),
-    ]
-    overall_ok = True
-    for label, provider, model in checks:
-        p = (provider or "").lower().strip()
-        key_ok = bool(_api_key_for_provider(p).strip())
-        if not key_ok:
-            lines.append(f"❌ <b>{_esc(label)}</b> ({_esc(p)}) — کلید در .env نیست")
-            overall_ok = False
-            continue
-        try:
-            system = "You are a connectivity probe. Reply with exactly: OK"
-            user = "ping"
-            if p == "anthropic":
-                reply = _call_anthropic(system, user, model=model, max_tokens=16)
-            else:
-                api_key, base_url = _resolve_provider_call(p)
-                reply = _call_openai_compatible(
-                    system,
-                    user,
-                    api_key=api_key,
-                    model=model,
-                    provider=p,
-                    base_url=base_url,
-                    max_tokens=16,
-                    json_mode=False,
-                )
-            snippet = (reply or "").strip().replace("\n", " ")[:80]
-            lines.append(
-                f"✅ <b>{_esc(label)}</b> ({_esc(p)} / {_esc(model)}) — متصل"
-                + (f" · پاسخ: <code>{_esc(snippet)}</code>" if snippet else "")
-            )
-        except Exception as exc:
-            overall_ok = False
-            err = html.escape(str(exc)[:220])
-            lines.append(
-                f"❌ <b>{_esc(label)}</b> ({_esc(p)} / {_esc(model)}) — خطا: {err}"
-            )
-
-    lines.append("")
-    lines.append("✅ همه چیز وصل است." if overall_ok else "⚠️ یک یا چند اتصال مشکل دارد.")
-    return "\n".join(lines)
+    from app.ai.codex import call_codex
+    try:
+        reply = await call_codex("Connectivity test. Reply with exactly OK. Do not use tools.", "ping")
+        if reply.strip() != "OK":
+            return "⚠️ Codex پاسخ غیرمنتظره داد؛ تنظیمات worker را بررسی کنید."
+        return "✅ اتصال Codex برقرار است."
+    except Exception:
+        return "❌ اتصال Codex برقرار نشد؛ codex login و PC Worker را بررسی کنید."
 
 
 def _render_provider_pick(role: str) -> tuple[str, dict]:

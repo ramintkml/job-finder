@@ -66,7 +66,7 @@ def resume_basename(*, lang: str, job_title: str) -> str:
     """Ramin Takmil - CV_en - Job Title  (no extension)."""
     lang = "fa" if str(lang).lower().startswith("fa") else "en"
     title = sanitize_job_title(job_title, max_len=70)
-    return f"Ramin Takmil - CV_{lang} - {title}"
+    return f"CV_{lang} - {title}"
 
 
 def resume_filename(*, lang: str, job_title: str, ext: str) -> str:

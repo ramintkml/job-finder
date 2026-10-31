@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -37,7 +38,11 @@ class Settings(BaseSettings):
     # Example: TELEGRAM_ADMIN_IDS=123456789
     telegram_admin_ids: str = ""
 
-    ai_provider: str = "groq"
+    ai_provider: str = "codex"
+    codex_cli_path: str = ""
+    codex_model: str = ""
+    codex_execution_mode: str = "auto"
+    codex_timeout_seconds: int = 600
     ai_screening_provider: str = ""
     ai_proposal_provider: str = ""
     anthropic_api_key: str = ""
@@ -49,12 +54,22 @@ class Settings(BaseSettings):
     ai_screening_model: str = ""
     ai_proposal_model: str = ""
 
+    @field_validator("ai_provider", "ai_screening_provider", "ai_proposal_provider", mode="before")
+    @classmethod
+    def codex_only(cls, value):
+        # Legacy .env/provider settings cannot reactivate an external AI backend.
+        return "codex"
+
     auto_bid_confidence_threshold: int = 85
     max_bids_per_day: int = 5
     test_mode: bool = True
     automation_enabled: bool = True
     freelancer_bidding_enabled: bool = False
     review_timeout_minutes: int = 15
+
+    deployment_revision: str = ""
+    deployment_revision: str = ""
+    dashboard_admin_password: str = ""
 
     host: str = "127.0.0.1"
     port: int = 8000
@@ -114,39 +129,25 @@ class Settings(BaseSettings):
 
     @property
     def screening_provider(self) -> str:
-        return (self.ai_screening_provider or self.ai_provider).lower().strip()
+        return "codex"
 
     @property
     def proposal_provider(self) -> str:
-        return (self.ai_proposal_provider or self.ai_provider).lower().strip()
+        return "codex"
 
     @staticmethod
     def default_model_for(provider: str) -> str:
-        p = provider.lower().strip()
-        if p == "openai":
-            return "gpt-4o"
-        if p == "deepseek":
-            return "deepseek-chat"
-        if p == "groq":
-            return "llama-3.3-70b-versatile"
-        if p == "gemini":
-            return "gemini-2.5-flash"
-        return "claude-sonnet-4-20250514"
+        return "Codex CLI default"
 
     @staticmethod
     def default_screening_model_for(provider: str) -> str:
-        p = provider.lower().strip()
-        if p == "groq":
-            return "llama-3.1-8b-instant"
-        if p == "gemini":
-            return "gemini-2.5-flash"
-        return Settings.default_model_for(provider)
+        return "Codex CLI default"
 
     def screening_model(self) -> str:
-        return self.ai_screening_model or self.default_screening_model_for(self.screening_provider)
+        return self.codex_model.strip() or "Codex CLI default"
 
     def proposal_model(self) -> str:
-        return self.ai_proposal_model or self.default_model_for(self.proposal_provider)
+        return self.codex_model.strip() or "Codex CLI default"
 
     @property
     def admin_telegram_ids(self) -> set[int]:
@@ -161,7 +162,7 @@ class Settings(BaseSettings):
             except ValueError:
                 continue
         # Private admin chat id is usually the same as the user's telegram id
-        chat = (self.telegram_review_chat_id or "").strip().lstrip("-")
+        chat = (self.telegram_review_chat_id or "").strip()
         if chat.isdigit():
             ids.add(int(chat))
         return ids
@@ -169,8 +170,6 @@ class Settings(BaseSettings):
     @property
     def default_model(self) -> str:
         """Legacy — proposal model."""
-        if self.ai_model:
-            return self.ai_model
         return self.proposal_model()
 
 

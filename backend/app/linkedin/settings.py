@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field, fields
 from sqlalchemy.orm import Session
 
 from app.database import AppSettings
+from app.services.credentials import seal, unseal
 
 SETTINGS_KEY = "linkedin_settings"
 
@@ -59,31 +60,24 @@ Best regards,
 
 
 def default_settings() -> LinkedInSettings:
-    return LinkedInSettings(
-        search_phrases=["python automation", "machine learning engineer"],
-        trigger_phrases=["python", "automation", "remote"],
-        email_template=DEFAULT_EMAIL_TEMPLATE,
-        applicant_name="Ramin Takmil",
-        applicant_role="AI Specialist / Full-Stack Developer",
-        top_skills="Python, AI/LLM integration, automation, full-stack development, computer vision",
-        experience_summary=(
-            "MSc Biomedical Engineering graduate building AI-powered products, automation systems, "
-            "and full-stack apps for startups and product teams."
-        ),
-        from_name="Ramin Takmil",
-        cv_file_path="data/cv/Ramin_Takmil_CV.pdf",
-    )
+    return LinkedInSettings(email_template=DEFAULT_EMAIL_TEMPLATE)
 
 
-def load_linkedin_settings(db: Session) -> LinkedInSettings:
+def load_linkedin_settings(db: Session, user_id: int | None = None) -> LinkedInSettings:
     from app.linkedin.profile_sync import apply_linkedin_identity
 
-    row = db.get(AppSettings, SETTINGS_KEY)
+    row = db.get(AppSettings, SETTINGS_KEY if user_id is None else f"linkedin_settings:{int(user_id)}")
     if not row or not row.value:
         cfg = default_settings()
     else:
         try:
             data = json.loads(row.value)
+            stored_password = data.get("gmail_app_password") or ""
+            data["gmail_app_password"] = unseal(stored_password)
+            if stored_password and not stored_password.startswith("enc:v1:"):
+                encrypted = dict(data, gmail_app_password=seal(stored_password))
+                row.value = json.dumps(encrypted)
+                db.commit()
             base = asdict(default_settings())
             base.update(data)
             valid = {f.name for f in fields(LinkedInSettings)}
@@ -92,14 +86,16 @@ def load_linkedin_settings(db: Session) -> LinkedInSettings:
         except (json.JSONDecodeError, TypeError):
             cfg = default_settings()
 
-    return apply_linkedin_identity(db, cfg)
+    return apply_linkedin_identity(db, cfg) if user_id is None else cfg
 
 
-def save_linkedin_settings(db: Session, settings: LinkedInSettings) -> None:
-    row = db.get(AppSettings, SETTINGS_KEY)
-    payload = json.dumps(asdict(settings))
+def save_linkedin_settings(db: Session, settings: LinkedInSettings, user_id: int | None = None) -> None:
+    row = db.get(AppSettings, SETTINGS_KEY if user_id is None else f"linkedin_settings:{int(user_id)}")
+    data = asdict(settings)
+    data["gmail_app_password"] = seal(data.get("gmail_app_password") or "")
+    payload = json.dumps(data)
     if row:
         row.value = payload
     else:
-        db.add(AppSettings(key=SETTINGS_KEY, value=payload))
+        db.add(AppSettings(key=SETTINGS_KEY if user_id is None else f"linkedin_settings:{int(user_id)}", value=payload))
     db.commit()

@@ -16,6 +16,8 @@ from app.database import AtsResume, BotApplication, LinkedInJob, Project, WorkJo
 from app.worker.queue import (
     JOB_ATS_REGENERATE,
     JOB_CODEX_APPLY,
+    JOB_CV_EDIT,
+    JOB_CODEX_TEXT,
     JOB_LINKEDIN_EMAIL,
     JOB_LINKEDIN_RESUME,
     JOB_PROJECT_SEND,
@@ -99,6 +101,22 @@ async def apply_work_result(db: Session, row: WorkJob, result: dict[str, Any]) -
         out = await _apply_project_send(db, row, result)
     elif job_type == JOB_VECTOR_SCREEN:
         out = {"ok": True, "message": "vector screen complete"}
+    elif job_type == JOB_CODEX_TEXT:
+        text = result.get("text")
+        out = {"ok": isinstance(text, str) and bool(text.strip()) and len(text) <= 1000000,
+               "message": "Codex response ready", "error": "Invalid Codex response"}
+    elif job_type == JOB_CV_EDIT:
+        from app.telegram.bot_user_tools import finish_cv_analysis
+        from app.telegram.bot import review_bot
+        payload = json.loads(row.payload_json or "{}")
+        try:
+            response = finish_cv_analysis(int(payload["telegram_user_id"]), payload, result.get("analysis") or {})
+        except (ValueError, TypeError):
+            out = {"ok": False, "error": "AI returned an invalid or unsupported CV entry"}
+        else:
+            if not response.get("ignored"):
+                await review_bot.send_message(response["message"], chat_id=int(payload["telegram_user_id"]), reply_markup=response.get("reply_markup"))
+            out = {"ok": True, "message": "CV interview result handled"}
     elif job_type == JOB_CODEX_APPLY:
         out = await _apply_codex_apply(db, row, result)
     elif job_type == JOB_SAVE_FILES:
@@ -124,6 +142,24 @@ async def fail_work_job(db: Session, row: WorkJob, error: str) -> None:
     row.error_message = (error or "Unknown error")[:2000]
     row.completed_at = _now()
     db.commit()
+
+    if row.job_type == JOB_CV_EDIT:
+        from app.telegram.bot_user_tools import pending_for, cv_ai_retry_markup
+        from app.telegram.bot import review_bot
+        payload = json.loads(row.payload_json or "{}")
+        pending = pending_for(int(payload["telegram_user_id"]))
+        if pending and pending.get("request_id") == payload.get("request_id"):
+            pending["step"] = "ai_error"
+            if review_bot.configured:
+                try:
+                    await review_bot.send_message("پردازش اطلاعات پروژه انجام نشد؛ اطلاعات شما حفظ شده. دوباره تلاش کنید.",
+                        chat_id=int(payload["telegram_user_id"]), reply_markup=cv_ai_retry_markup())
+                except Exception:
+                    logger.exception("Failed to notify CV interview user")
+        return
+
+    if row.job_type == JOB_CODEX_TEXT:
+        return
 
     # Roll back ATS generating state
     if row.job_type in (JOB_LINKEDIN_RESUME, JOB_ATS_REGENERATE):
@@ -154,7 +190,7 @@ async def fail_work_job(db: Session, row: WorkJob, error: str) -> None:
 
         if review_bot.configured:
             chat_id = None
-            if row.job_type == JOB_CODEX_APPLY and row.payload_json:
+            if row.job_type in (JOB_CODEX_APPLY, JOB_CV_EDIT) and row.payload_json:
                 try:
                     payload = json.loads(row.payload_json)
                     chat_id = payload.get("chat_id") or row.entity_id
@@ -254,6 +290,9 @@ async def _apply_project_send(db: Session, row: WorkJob, result: dict) -> dict:
 
 async def _apply_codex_apply(db: Session, row: WorkJob, result: dict) -> dict:
     """Persist Codex package + deliver a structured Telegram update with Improve."""
+    if bool(result.get("translate_fa")):
+        return await _apply_codex_translate_fa(db, row, result)
+
     import html as html_lib
 
     from app.ats.docx_export import export_markdown_docx
@@ -338,6 +377,8 @@ async def _apply_codex_apply(db: Session, row: WorkJob, result: dict) -> dict:
         app = BotApplication(telegram_user_id=telegram_user_id)
         db.add(app)
 
+    if int(app.telegram_user_id) != telegram_user_id:
+        raise ValueError("Application belongs to another user")
     app.work_job_id = row.id
     app.title = title[:512]
     app.company = company[:256]
@@ -584,5 +625,117 @@ async def _apply_codex_apply(db: Session, row: WorkJob, result: dict) -> dict:
     return {
         "ok": True,
         "message": "Codex apply delivered to Telegram",
+        "application_id": app.id,
+    }
+
+
+async def _apply_codex_translate_fa(db: Session, row: WorkJob, result: dict) -> dict:
+    """Persist Codex Persian translation and deliver FA DOCX/PDF on Telegram."""
+    import html as html_lib
+
+    from app.ats.naming import resume_filename, sanitize_job_title
+    from app.telegram.bot import review_bot
+    from app.telegram.bot_user_tools import application_actions_markup
+
+    chat_id = result.get("chat_id") or row.entity_id
+    app_id = result.get("application_id")
+    if not app_id:
+        raise RuntimeError("translate_fa result missing application_id")
+    app = db.get(BotApplication, int(app_id))
+    if app is None:
+        raise RuntimeError(f"BotApplication {app_id} not found for FA translation")
+    owner = int(result.get("telegram_user_id") or row.entity_id)
+    if int(app.telegram_user_id) != owner:
+        raise ValueError("Application belongs to another user")
+
+    title = sanitize_job_title(str(result.get("title") or app.title or "Role"), max_len=60)
+    out_dir = Path(ATS_DIR) / "applications" / str(app.id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fa_docx = out_dir / resume_filename(lang="fa", job_title=title, ext="docx")
+    fa_pdf = out_dir / resume_filename(lang="fa", job_title=title, ext="pdf")
+    legacy_fa_docx = out_dir / "resume_fa.docx"
+    legacy_fa_pdf = out_dir / "resume_fa.pdf"
+
+    fa_json = (result.get("resume_fa_json") or "").strip()
+    if fa_json:
+        app.resume_fa_json = fa_json[:400000]
+        (out_dir / "resume_fa.json").write_text(fa_json, encoding="utf-8")
+
+    b64_docx = result.get("resume_fa_docx_b64")
+    if b64_docx:
+        _write_b64_file(fa_docx, b64_docx)
+        if fa_docx.is_file():
+            legacy_fa_docx.write_bytes(fa_docx.read_bytes())
+            app.resume_fa_docx_path = str(fa_docx)
+
+    b64_pdf = result.get("resume_fa_pdf_b64")
+    if b64_pdf:
+        _write_b64_file(fa_pdf, b64_pdf)
+        if fa_pdf.is_file():
+            legacy_fa_pdf.write_bytes(fa_pdf.read_bytes())
+            app.resume_fa_pdf_path = str(fa_pdf)
+
+    # If worker returned JSON but not DOCX, export on VPS
+    if fa_json and not fa_docx.is_file():
+        try:
+            from app.ats.docx_export import export_resume_docx_fa
+
+            fa = json.loads(fa_json)
+            export_resume_docx_fa(fa, fa_docx)
+            if fa_docx.is_file():
+                legacy_fa_docx.write_bytes(fa_docx.read_bytes())
+                app.resume_fa_docx_path = str(fa_docx)
+        except Exception:
+            logger.exception("VPS FA DOCX fallback failed for app %s", app.id)
+
+    if fa_json and not fa_pdf.is_file():
+        try:
+            from app.ats.pdf_export import export_resume_pdf_fa
+
+            fa = json.loads(fa_json)
+            export_resume_pdf_fa(fa, fa_pdf)
+            if fa_pdf.is_file():
+                legacy_fa_pdf.write_bytes(fa_pdf.read_bytes())
+                app.resume_fa_pdf_path = str(fa_pdf)
+        except Exception:
+            logger.exception("VPS FA PDF fallback failed for app %s", app.id)
+
+    app.status = "ready"
+    app.error_message = None
+    db.commit()
+    db.refresh(app)
+
+    markup = application_actions_markup(app)
+    esc = html_lib.escape
+    msg = (
+        "✅ <b>ترجمه فارسی</b> با Codex آماده شد (DOCX راست‌چین · B Nazanin).\n"
+        f"شغل: <b>{esc(title)}</b>\n"
+        "حالا دکمه <b>PDF فارسی</b> هم فعال است."
+    )
+    if review_bot.configured and chat_id:
+        await review_bot.send_message(msg, chat_id=int(chat_id), reply_markup=markup)
+        if fa_docx.is_file():
+            try:
+                await review_bot.send_document(
+                    str(fa_docx),
+                    chat_id=int(chat_id),
+                    caption=f"{fa_docx.name} (RTL · Codex)",
+                    reply_markup=markup,
+                )
+            except Exception:
+                logger.exception("Failed sending FA DOCX")
+        if fa_pdf.is_file():
+            try:
+                await review_bot.send_document(
+                    str(fa_pdf),
+                    chat_id=int(chat_id),
+                    caption=f"{fa_pdf.name} (PDF · Codex)",
+                )
+            except Exception:
+                logger.exception("Failed sending FA PDF")
+
+    return {
+        "ok": True,
+        "message": "Codex FA translation delivered to Telegram",
         "application_id": app.id,
     }

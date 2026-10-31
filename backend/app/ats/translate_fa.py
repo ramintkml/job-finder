@@ -1,4 +1,9 @@
-"""AI translation of structured resumes to Persian (Farsi)."""
+"""AI translation of structured resumes to Persian (Farsi).
+
+NOTE: Telegram «ترجمه فارسی» now queues Codex on the PC worker
+(`JOB_CODEX_APPLY` + `translate_fa=True`). This Groq/API helper remains
+only as an optional fallback utility — do not call it from the bot path.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +24,7 @@ _MD_JUNK_RE = re.compile(r"\*\*|__|`+")
 async def translate_resume_to_persian(resume: dict[str, Any]) -> dict[str, Any]:
     """Return a Persian copy of the structured resume for RTL DOCX/PDF export.
 
+    Prefer the Codex worker path for production Telegram translations.
     Keeps contact URLs, emails, phones, and well-known tech names in English
     when that is clearer for ATS/recruiters.
     """

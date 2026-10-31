@@ -12,6 +12,12 @@ logger = logging.getLogger(__name__)
 
 
 def load_base_cv_text() -> str:
+    from app.config import settings
+    from app.services.cv_service import read_cv
+    if settings.admin_telegram_ids:
+        saved = read_cv(sorted(settings.admin_telegram_ids)[0])
+        if saved:
+            return saved
     if CV_MD_PATH.exists():
         return CV_MD_PATH.read_text(encoding="utf-8")
     raise FileNotFoundError(f"Base CV not found at {CV_MD_PATH}")

@@ -3,8 +3,8 @@ backend/.env
 backend/venv/
 frontend/node_modules/
 frontend/dist/
-API
-API.txt
+/API
+/API.txt
 *.session
 *.session-journal
 __pycache__/
@@ -12,3 +12,8 @@ __pycache__/
 .DS_Store
 backend/app/ats/fonts/*.ttf
 backend/app/ats/fonts/*.otf
+
+.task_*.py
+backend/tests/.tmp/
+output/
+tmp/

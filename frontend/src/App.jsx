@@ -149,8 +149,8 @@ function ApplicationCard({ app, open, onToggle, busy, onDelete }) {
   );
 }
 
-export default function App() {
-  const [tab, setTab] = useState("overview");
+function Dashboard({session}) {
+  const [tab, setTab] = useState(session.is_admin ? "overview" : "jobs");
   const [busy, setBusy] = useState("");
   const [flash, setFlash] = useState(null);
   const [health, setHealth] = useState(null);
@@ -159,6 +159,8 @@ export default function App() {
   const [draft, setDraft] = useState(emptySettings);
   const [applications, setApplications] = useState([]);
   const [openAppIds, setOpenAppIds] = useState(() => new Set());
+
+  const [lastRefresh, setLastRefresh] = useState(null);
 
   const showFlash = useCallback((type, message) => {
     setFlash({ type, message });
@@ -189,6 +191,7 @@ export default function App() {
   }, []);
 
   const refreshCore = useCallback(async () => {
+    if (!session.is_admin) return;
     const [healthData, workerData, settingsData] = await Promise.all([
       api.health(),
       api.workerStatus(),
@@ -197,7 +200,7 @@ export default function App() {
     setHealth(healthData);
     setWorker(workerData);
     applySettingsPayload(settingsData);
-  }, [applySettingsPayload]);
+  }, [applySettingsPayload, session.is_admin]);
 
   const refreshApplications = useCallback(async () => {
     const data = await api.listApplications();
@@ -213,6 +216,21 @@ export default function App() {
       refreshApplications().catch((err) => showFlash("error", err.message || String(err)));
     }
   }, [tab, refreshApplications, showFlash]);
+
+  useEffect(() => {
+    const REFRESH_MS = 15 * 60 * 1000;
+    const tick = async () => {
+      try {
+        await refreshCore();
+        await refreshApplications();
+        setLastRefresh(new Date());
+      } catch {
+        // Keep the last good dashboard data; retry on the next interval.
+      }
+    };
+    const id = window.setInterval(tick, REFRESH_MS);
+    return () => window.clearInterval(id);
+  }, [refreshCore, refreshApplications]);
 
   const counts = useMemo(() => {
     const all = applications.length;
@@ -252,7 +270,7 @@ export default function App() {
           </p>
         </div>
         <nav className="nav" aria-label="Main">
-          {TABS.map((item) => (
+          {TABS.filter(item => session.is_admin || item.id === "jobs").map((item) => (
             <button
               key={item.id}
               type="button"
@@ -278,6 +296,9 @@ export default function App() {
               </div>
               <div className="hint">
                 {worker?.worker_name || worker?.worker_id || "Start launch.bat on this PC"}
+                {lastRefresh
+                  ? ` · auto-refresh 15 min · last ${formatWhen(lastRefresh)}`
+                  : " · auto-refresh every 15 min"}
               </div>
             </div>
             <div className="stat">
@@ -540,4 +561,38 @@ export default function App() {
       ) : null}
     </div>
   );
+}
+
+
+export default function App() {
+  const [session, setSession] = useState(null);
+  const [checking, setChecking] = useState(true);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+  useEffect(() => {
+    const initData = window.Telegram?.WebApp?.initData || new URLSearchParams(window.location.hash.slice(1)).get("tgWebAppData");
+    const check = initData ? api.telegramLogin(initData) : api.me();
+    check.then(setSession).catch(() => {}).finally(() => setChecking(false));
+    const expired = () => setSession(null);
+    window.addEventListener("session-expired", expired);
+    return () => window.removeEventListener("session-expired", expired);
+  }, []);
+  async function login(event) {
+    event.preventDefault();
+    setPending(true); setError("");
+    try { setSession(await api.login(password)); setPassword(""); }
+    catch (err) { setError(err.message); }
+    finally { setPending(false); }
+  }
+  if (checking) return <main className="app-shell">Loading…</main>;
+  if (!session) return <main className="app-shell" style={{maxWidth: 440, margin: "10vh auto", padding: 24}}>
+    <h1>Career Pilot</h1><p>Sign in to your dashboard.</p>
+    <form onSubmit={login}>
+      <label>Dashboard password <input type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
+      <button type="submit" disabled={pending}>{pending ? "Signing in…" : "Sign in"}</button>
+      {error && <p role="alert">{error}</p>}
+    </form>
+  </main>;
+  return <><div style={{textAlign: "right", padding: 12}}><button onClick={async () => {await api.logout(); setSession(null);}}>Sign out</button></div><Dashboard session={session} /></>;
 }

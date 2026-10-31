@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import html
 import json
@@ -9,8 +11,13 @@ from enum import Enum
 from typing import Callable
 
 from sqlalchemy.orm import Session
-from telethon import TelegramClient, events
-from telethon.tl.custom.message import Message
+try:
+    from telethon import TelegramClient, events
+    from telethon.tl.custom.message import Message
+except ImportError:
+    TelegramClient = None
+    events = None
+    Message = None
 
 from app.config import DATA_DIR, SESSION_PATH, settings
 from app.database import AtsResume, LinkedInJob, Project, SessionLocal

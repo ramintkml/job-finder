@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 import logging
 import re
@@ -13,6 +14,8 @@ from app.config import ATS_DIR
 from app.worker.queue import (
     JOB_ATS_REGENERATE,
     JOB_CODEX_APPLY,
+    JOB_CV_EDIT,
+    JOB_CODEX_TEXT,
     JOB_LINKEDIN_EMAIL,
     JOB_LINKEDIN_RESUME,
     JOB_PROJECT_SEND,
@@ -29,6 +32,15 @@ def _safe_filename(name: str) -> str:
 
 
 async def execute_job(job_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    from app.ai.codex import REQUEST_MODEL
+    token = REQUEST_MODEL.set(payload.get("_codex_model"))
+    try:
+        return await _execute_job(job_type, payload)
+    finally:
+        REQUEST_MODEL.reset(token)
+
+
+async def _execute_job(job_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     if job_type == JOB_LINKEDIN_EMAIL:
         return await _exec_linkedin_email(payload)
     if job_type in (JOB_LINKEDIN_RESUME, JOB_ATS_REGENERATE):
@@ -37,6 +49,13 @@ async def execute_job(job_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         return await _exec_project_send(payload)
     if job_type == JOB_VECTOR_SCREEN:
         return await _exec_vector_screen(payload)
+    if job_type == JOB_CODEX_TEXT:
+        import asyncio
+        from app.ai.codex import infer_local
+        return {"text": await asyncio.to_thread(infer_local, payload["system"], payload["user"])}
+    if job_type == JOB_CV_EDIT:
+        from app.worker.cv_edit import run_cv_edit
+        return await run_cv_edit(payload)
     if job_type == JOB_CODEX_APPLY:
         from app.worker.codex_apply import run_codex_apply
 
@@ -109,7 +128,7 @@ async def _exec_linkedin_email(payload: dict) -> dict:
         "job_url": job.get("job_url") or "",
         "description": job.get("description") or "",
     }
-    subject, body, recipient = compose_application_email(job_data, cfg)
+    subject, body, recipient = await asyncio.to_thread(compose_application_email, job_data, cfg)
     return {
         "email_subject": subject,
         "email_body": body,

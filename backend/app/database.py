@@ -130,6 +130,8 @@ class DailyBidCount(Base):
 class LinkedInJob(Base):
     __tablename__ = "linkedin_jobs"
 
+    user_id = Column(Integer, nullable=True, index=True)  # null = legacy operator data
+
     id = Column(Integer, primary_key=True, autoincrement=True)
     linkedin_job_id = Column(String(32), unique=True, nullable=False, index=True)
     title = Column(String(512), default="")
@@ -155,6 +157,8 @@ class LinkedInJob(Base):
 
 class AtsResume(Base):
     __tablename__ = "ats_resumes"
+
+    user_id = Column(Integer, nullable=True, index=True)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     linkedin_job_db_id = Column(Integer, unique=True, nullable=False, index=True)
@@ -224,6 +228,10 @@ class WorkJob(Base):
 
     __tablename__ = "work_jobs"
 
+    user_id = Column(Integer, nullable=True, index=True)
+    claim_token = Column(String(64), nullable=True)
+    attempts = Column(Integer, default=0, nullable=False)
+
     id = Column(Integer, primary_key=True, autoincrement=True)
     job_type = Column(String(64), nullable=False, index=True)
     # linkedin_create_email | linkedin_create_resume | ats_regenerate | project_send_bid
@@ -254,6 +262,19 @@ def init_db() -> None:
 def _migrate_columns() -> None:
     """Add new columns to existing SQLite databases."""
     with engine.connect() as conn:
+        conn.exec_driver_sql("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
+        for table, declarations in {
+            "linkedin_jobs": {"user_id": "INTEGER"},
+            "ats_resumes": {"user_id": "INTEGER"},
+            "work_jobs": {"user_id": "INTEGER", "claim_token": "VARCHAR(64)", "attempts": "INTEGER NOT NULL DEFAULT 0"},
+        }.items():
+            existing = {r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+            for column, declaration in declarations.items():
+                if column not in existing:
+                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+            conn.exec_driver_sql(f"CREATE INDEX IF NOT EXISTS ix_{table}_user_id ON {table}(user_id)")
+        conn.exec_driver_sql("INSERT OR IGNORE INTO schema_migrations VALUES (1, datetime('now'))")
+        conn.commit()
         rows = conn.exec_driver_sql("PRAGMA table_info(projects)").fetchall()
         columns = {row[1] for row in rows}
         if "review_reason" not in columns:

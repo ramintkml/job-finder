@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -123,7 +124,7 @@ async def _ai_screen_or_skip(db: Session, job: LinkedInJob, cfg: LinkedInSetting
 async def prepare_matched_job(db: Session, job: LinkedInJob, cfg: LinkedInSettings) -> None:
     """Compose email from template + AI placeholder fills; mark job ready to send (draft)."""
     try:
-        subject, body, recipient = compose_application_email(_job_data(job), cfg)
+        subject, body, recipient = await asyncio.to_thread(compose_application_email, _job_data(job), cfg)
         if not recipient:
             await _handle_no_recipient_job(db, job, subject, body)
             return
@@ -392,7 +393,7 @@ async def run_linkedin_find(db: Session) -> dict:
 
 async def compose_linkedin_draft(db: Session, job: LinkedInJob, cfg: LinkedInSettings) -> None:
     """AI-compose application email and save as draft (does not send)."""
-    subject, body, recipient = compose_application_email(_job_data(job), cfg)
+    subject, body, recipient = await asyncio.to_thread(compose_application_email, _job_data(job), cfg)
     job.email_subject = subject
     job.email_body = body
     job.recipient_email = recipient or None

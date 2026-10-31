@@ -21,6 +21,10 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo Building authenticated dashboard...
+call npm run build --prefix frontend
+if errorlevel 1 exit /b 1
+
 echo Creating remote dirs...
 ssh -i "%SSH_KEY%" -o IdentitiesOnly=yes %VPS_USER%@%VPS_HOST% "mkdir -p %REMOTE%/backend %REMOTE%/deploy %REMOTE%/logs %REMOTE%/data %REMOTE%/frontend"
 
@@ -30,11 +34,17 @@ scp -i "%SSH_KEY%" -o IdentitiesOnly=yes backend\requirements.txt backend\requir
 scp -i "%SSH_KEY%" -o IdentitiesOnly=yes -r deploy\* %VPS_USER%@%VPS_HOST%:%REMOTE%/deploy/
 scp -i "%SSH_KEY%" -o IdentitiesOnly=yes AGENT_BRIEF.md README.md %VPS_USER%@%VPS_HOST%:%REMOTE%/
 
+echo Uploading built dashboard...
+scp -i "%SSH_KEY%" -o IdentitiesOnly=yes -r frontend\dist %VPS_USER%@%VPS_HOST%:%REMOTE%/frontend/
+if errorlevel 1 exit /b 1
+
 echo Running remote setup...
 ssh -i "%SSH_KEY%" -o IdentitiesOnly=yes %VPS_USER%@%VPS_HOST% "chmod +x %REMOTE%/deploy/setup_vps.sh && bash %REMOTE%/deploy/setup_vps.sh"
 
 echo.
-echo Done. Edit secrets on VPS if needed:
+echo Done. Ensure DASHBOARD_ADMIN_PASSWORD is set on VPS.
+echo Restart the PC worker with launch.bat after this protocol upgrade.
+echo Edit secrets on VPS if needed:
 echo   ssh -i "%SSH_KEY%" %VPS_USER%@%VPS_HOST%
 echo   nano %REMOTE%/backend/.env
 echo   export PATH=$HOME/.npm-global/bin:$PATH ^&^& pm2 restart linkedin-job-finder

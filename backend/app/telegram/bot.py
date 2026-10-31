@@ -162,6 +162,7 @@ class ReviewBot:
             {"command": "start", "description": "شروع و راهنما"},
             {"command": "apply", "description": "ارسال آگهی شغل (JD) → ارزیابی + رزومه"},
             {"command": "worker", "description": "وضعیت آنلاین بودن PC Worker"},
+            {"command": "addproject", "description": "افزودن پروژه به رزومه پایه"},
             {"command": "basecv", "description": "دانلود رزومه پایه (DOCX + PDF)"},
             {"command": "jobs", "description": "شغل‌های جدید برای بررسی"},
             {"command": "search", "description": "تنظیم جستجوی لینکدین"},
@@ -460,9 +461,7 @@ class ReviewBot:
         """True if this chat is the optional admin receipt chat."""
         if chat_id is None or not self.chat_id:
             return False
-        want = self.chat_id.lstrip("-")
-        got = str(chat_id).lstrip("-")
-        return want == got or want.endswith(got) or got.endswith(want)
+        return str(self.chat_id).strip() == str(chat_id).strip()
 
     def _is_admin(
         self,
@@ -473,7 +472,7 @@ class ReviewBot:
         """Admin if telegram user id is in TELEGRAM_ADMIN_IDS (or review chat id)."""
         if telegram_user_id is not None and int(telegram_user_id) in settings.admin_telegram_ids:
             return True
-        return self._chat_allowed(chat_id)
+        return False
 
     async def _poll_loop(self) -> None:
         logger.info("Review bot long-polling for updates")
@@ -522,11 +521,16 @@ class ReviewBot:
         )
         uid = int(telegram_user_id) if telegram_user_id is not None else None
 
+        # CVs and account actions are private-chat only; do not register group chats.
+        if chat.get("type", "private") != "private":
+            await self.send_message("برای حفظ حریم خصوصی، در گفت‌وگوی خصوصی ربات ادامه دهید.", chat_id=chat_id)
+            return
+
         # Register any Telegram user who messages the bot
         if telegram_user_id is not None:
             db = SessionLocal()
             try:
-                get_or_create_user(
+                registered_user = get_or_create_user(
                     db,
                     telegram_user_id=int(telegram_user_id),
                     chat_id=int(chat_id),
@@ -535,6 +539,10 @@ class ReviewBot:
                 )
             finally:
                 db.close()
+
+        if telegram_user_id is not None and not registered_user.is_active:
+            await self.send_message("حساب شما غیرفعال است؛ با پشتیبانی تماس بگیرید.", chat_id=chat_id)
+            return
 
         # Card-to-card receipt: photo or document from any user with an open order
         photo = msg.get("photo")
@@ -631,6 +639,11 @@ class ReviewBot:
             text = f"{cmd} {rest}".strip() if rest else cmd
 
         from app.telegram import bot_user_tools
+
+        if telegram_user_id is not None and text in ("➕ افزودن پروژه", "/addproject", "/editcv", "ویرایش رزومه"):
+            result = bot_user_tools.start_cv_update(int(telegram_user_id))
+            await self._apply_user_tool_result(result, chat_id=int(chat_id), is_admin=is_admin, telegram_user_id=uid)
+            return
 
         # Cancel / continue user tool flows
         if telegram_user_id is not None and bot_user_tools.pending_for(int(telegram_user_id)):
@@ -808,7 +821,7 @@ class ReviewBot:
             if telegram_user_id is None:
                 await self.send_message("شناسه کاربر یافت نشد.", chat_id=chat_id)
                 return
-            result = bot_user_tools.send_base_cv_files(int(telegram_user_id))
+            result = await asyncio.to_thread(bot_user_tools.send_base_cv_files, int(telegram_user_id))
             await self._apply_user_tool_result(
                 result,
                 chat_id=int(chat_id),
@@ -1225,6 +1238,19 @@ class ReviewBot:
         if chat_id is None:
             await self.answer_callback(cq_id, text="چت نامشخص")
             return
+
+        if chat.get("type", "private") != "private":
+            await self.answer_callback(cq_id, text="این عملیات فقط در گفت‌وگوی خصوصی انجام می‌شود", show_alert=True)
+            return
+
+        if uid is not None:
+            from app.billing.service import get_user_by_telegram_id
+            from app.database import SessionLocal
+            with SessionLocal() as db:
+                account = get_user_by_telegram_id(db, uid)
+                if account is None or not account.is_active:
+                    await self.answer_callback(cq_id, text="حساب فعال نیست", show_alert=True)
+                    return
 
         if not data:
             await self.answer_callback(cq_id, text="عملیات نامشخص")

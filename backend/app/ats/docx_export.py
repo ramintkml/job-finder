@@ -462,36 +462,62 @@ def export_markdown_docx(markdown: str, path: Path) -> Path:
     return _export_markdown_docx_linear(markdown, path)
 
 
+# Canonical profile links (also in documents/base_cv.txt) — used only as last resort
+_DEFAULT_LINKEDIN = ""
+_DEFAULT_GITHUB = ""
+
+
+def _apply_contact_part(out: dict[str, Any], part: str) -> None:
+    part = (part or "").strip().strip("*_ ")
+    if not part:
+        return
+    low = part.lower()
+    if "@" in part and not out.get("email"):
+        out["email"] = part
+    elif re.search(r"\+?\d[\d\s\-()]{6,}", part) and not out.get("phone"):
+        out["phone"] = part
+    elif "linkedin" in low and not out.get("linkedin"):
+        out["linkedin"] = re.sub(r"^https?://(www\.)?", "", part, flags=re.I).rstrip("/")
+    elif "github" in low and not out.get("github"):
+        out["github"] = re.sub(r"^https?://(www\.)?", "", part, flags=re.I).rstrip("/")
+    elif re.search(r"(remote|iran|australia|germany|usa|uk)", part, re.I) and not out.get(
+        "location"
+    ):
+        out["location"] = part
+
+
 def _enrich_from_markdown_sections(markdown: str, base: dict[str, Any]) -> dict[str, Any]:
     """Pull contact + optional template sections from markdown headings."""
     out = dict(base)
     text = (markdown or "").replace("\r\n", "\n")
     lines = text.split("\n")
 
-    # Contact line heuristic near top
-    for ln in lines[:12]:
-        s = ln.strip()
-        if "@" in s and "|" in s:
-            parts = [p.strip() for p in s.split("|")]
-            for part in parts:
-                if "@" in part and not out.get("email"):
-                    out["email"] = part
-                elif re.search(r"\+?\d[\d\s\-()]{6,}", part) and not out.get("phone"):
-                    out["phone"] = part
-                elif "linkedin" in part.lower() and not out.get("linkedin"):
-                    out["linkedin"] = part
-                elif "github" in part.lower() and not out.get("github"):
-                    out["github"] = part
-                elif re.search(r"(remote|iran|australia|germany|usa|uk)", part, re.I) and not out.get(
-                    "location"
-                ):
-                    out["location"] = part
-            break
+    # Scan ALL header lines (email/phone and LinkedIn/GitHub are often on separate lines).
+    # Do NOT break after the first contact line — that dropped LinkedIn/GitHub.
+    for ln in lines[:16]:
+        s = ln.strip().lstrip("#").strip()
+        if not s or s.startswith("##"):
+            if s.startswith("##"):
+                break
+            continue
+        if "|" not in s and "linkedin" not in s.lower() and "github" not in s.lower():
+            continue
+        if not (
+            "@" in s
+            or "linkedin" in s.lower()
+            or "github" in s.lower()
+            or re.search(r"\+?\d[\d\s\-()]{6,}", s)
+        ):
+            continue
+        for part in [p.strip() for p in s.split("|")]:
+            _apply_contact_part(out, part)
 
-    # Normalize skills heading label preference
-    if out.get("skills") and isinstance(out["skills"], dict):
-        # already fine
-        pass
+    if not (out.get("linkedin") or "").strip():
+        out["linkedin"] = _DEFAULT_LINKEDIN
+    if not (out.get("github") or "").strip():
+        out["github"] = _DEFAULT_GITHUB
+    if not (out.get("location") or "").strip():
+        out["location"] = ""
 
     return out
 

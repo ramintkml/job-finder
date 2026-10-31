@@ -75,7 +75,7 @@ Description:
 {description[:6000]}
 {ledger_block}{guidance_block}
 {project_markdown_rules()}
-Return JSON with this shape (Ramin Takmil CV template — keep this section order):
+Return JSON with this shape (keep this section order; use only this user's facts):
 {{
   "full_name": "...",
   "professional_title": "...",
@@ -94,7 +94,7 @@ Return JSON with this shape (Ramin Takmil CV template — keep this section orde
   }},
     "projects": [
     {{
-      "name": "canonical project name",
+      "name": "project name from this user's base CV",
       "subtitle": "",
       "url": "github and/or live URL — required",
       "bullets": ["Action Verb + JD-aligned tech + truthful result", "..."]

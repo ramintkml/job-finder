@@ -58,7 +58,7 @@ Allowed variants: `Professional Summary`, `Work Experience`, `Technical Skills`,
 
 ## Recommended Section Order
 
-Default Career Pilot / Ramin Takmil template (match DOCX export):
+Default Career Pilot template (match DOCX export):
 
 1. **Header** (name, title, contact — in body, not Word header)
 2. **Professional Summary**
@@ -169,12 +169,11 @@ When engagements are parallel rather than sequential:
 
 ## Projects
 
-Always include **all five** Selected Projects from the base CV. Never drop one.
+Use Selected Projects from the current user's base CV, including newly added projects. Never invent projects or copy facts from another candidate.
 
 - Reorder by JD relevance (closest stack/domain first; others still listed)
 - Parent bullet: project name + GitHub and/or live URL
 - Sub-bullets: 3–6 truthful facts, rewritten with Claim/Bridge JD spellings
-- Required links: Bendly (github.com/Bendly-app | https://stg.bendly.io/), Medinex (github.com/ramintkml/medinex | medinex.top), OT Clinic (github.com/ramintkml/ot-clinic | fereshteganrehab.ir), Job Finder (github.com/ramintkml/job-finder), Roof Graph Extraction (github.com/ramintkml/Roof_Graph_Extraction)
 
 ```text
 - Project Name — github.com/... | live-url
@@ -261,7 +260,7 @@ Execute in order. Do not skip.
 6. **Write Summary** — 3–5 lines; JD-aligned title/stack; truthful only.
 7. **Write Skills** — categorized; Claim keywords first.
 8. **Rewrite Experience bullets** — verb + tech + result; tailor emphasis to JD; keep facts fixed.
-9. **Write Selected Projects** — include all five base-CV projects; reorder by JD; parent bullet + sub-bullets; keep GitHub/live links; tailor details with Claim/Bridge spellings only.
+9. **Write Selected Projects** — include the current user's relevant base-CV projects; reorder by JD; parent bullet + sub-bullets; keep GitHub/live links; tailor details with Claim/Bridge spellings only.
 10. **Education / Certs** — compact, accurate.
 11. **Self-check** (below) — fix failures before export.
 12. **Export DOCX** — single-column, Calibri/Arial, no tables/headers/footers.

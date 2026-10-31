@@ -7,11 +7,21 @@ from pathlib import Path
 from typing import Any
 
 from app.ats.naming import resume_filename
-from app.ats.selected_projects import ensure_selected_projects
+import logging
+
+logger = logging.getLogger(__name__)
 
 _HEADINGS = {
     "professional summary": "summary",
     "core skills": "skills",
+    "skills": "skills",
+    "projects": "projects",
+    "experience": "experience",
+    "work experience": "experience",
+    "summary": "summary",
+    "پروژه‌ها": "projects",
+    "سوابق شغلی": "experience",
+    "مهارت‌ها": "skills",
     "selected projects": "projects",
     "additional experience": "additional",
     "professional experience": "experience",
@@ -59,7 +69,7 @@ def parse_base_cv_text(text: str) -> dict[str, Any]:
     while i < len(lines):
         raw = lines[i]
         i += 1
-        stripped = raw.strip()
+        stripped = raw.strip().lstrip("#").strip()
         if not stripped:
             continue
         key = is_heading(stripped)
@@ -74,7 +84,7 @@ def parse_base_cv_text(text: str) -> dict[str, Any]:
                 name = stripped
             elif not title and "@" not in stripped and len(stripped) < 80:
                 title = stripped
-            elif "|" in stripped:
+            elif "|" in stripped or "@" in stripped or "linkedin" in stripped.lower() or "github" in stripped.lower():
                 for part in [p.strip() for p in stripped.split("|")]:
                     if "@" in part:
                         email = part
@@ -98,6 +108,8 @@ def parse_base_cv_text(text: str) -> dict[str, Any]:
                 items = [x.strip() for x in rest.split(",") if x.strip()]
                 if cat.strip():
                     skills[cat.strip()] = items
+            else:
+                skills.setdefault("Skills", []).append(stripped.lstrip("-*• "))
             continue
 
         if section == "projects":
@@ -108,7 +120,7 @@ def parse_base_cv_text(text: str) -> dict[str, Any]:
                 current_proj = {"name": body, "subtitle": "", "url": "", "bullets": []}
                 # Pull URL-looking tail after em dash
                 if "github.com" in body.lower() or "http" in body.lower() or ".top" in body.lower():
-                    parts = re.split(r"\s+[—–]\s+", body, maxsplit=1)
+                    parts = re.split(r"\s*[—–]\s*", body, maxsplit=1)
                     if len(parts) == 2 and (
                         "github" in parts[1].lower()
                         or "http" in parts[1].lower()
@@ -127,7 +139,7 @@ def parse_base_cv_text(text: str) -> dict[str, Any]:
 
         if section == "additional":
             if "—" in stripped or "–" in stripped:
-                left, right = re.split(r"\s+[—–]\s+", stripped, maxsplit=1)
+                left, right = re.split(r"\s*[—–]\s*", stripped, maxsplit=1)
                 additional.append({"title": left.strip(), "text": right.strip(), "bullets": []})
             else:
                 additional.append({"title": stripped, "text": "", "bullets": []})
@@ -140,18 +152,18 @@ def parse_base_cv_text(text: str) -> dict[str, Any]:
             if looks_role and "—" in stripped or looks_role and "–" in stripped:
                 bits = [b.strip() for b in stripped.split("|")]
                 left = bits[0]
-                parts = re.split(r"\s+[—–]\s+", left, maxsplit=1)
+                parts = re.split(r"\s*[—–]\s*", left, maxsplit=1)
                 dates = bits[-1] if len(bits) > 1 and re.search(r"\d{4}|Present|month", bits[-1], re.I) else ""
-                location = ""
+                role_location = ""
                 if len(bits) == 3:
-                    location = bits[1]
+                    role_location = bits[1]
                     dates = bits[2]
                 elif len(bits) == 2 and not dates:
-                    location = bits[1]
+                    role_location = bits[1]
                 current_role = {
                     "title": (parts[0] if parts else left).strip(),
                     "company": (parts[1] if len(parts) > 1 else "").strip(),
-                    "location": location,
+                    "location": role_location,
                     "dates": dates,
                     "bullets": [],
                 }
@@ -186,8 +198,8 @@ def parse_base_cv_text(text: str) -> dict[str, Any]:
                 certs.append(stripped)
 
     resume = {
-        "full_name": name or "Ramin Takmil",
-        "professional_title": title or "AI Specialist / Full-Stack Developer",
+        "full_name": name or "Candidate",
+        "professional_title": title or "",
         "email": email,
         "phone": phone,
         "linkedin": linkedin,
@@ -203,18 +215,24 @@ def parse_base_cv_text(text: str) -> dict[str, Any]:
         "languages": languages,
         "certifications": certs,
     }
-    return ensure_selected_projects(resume, job_text="")
+    return resume
 
 
-def export_base_cv_files(text: str, dest_dir: Path) -> tuple[Path, Path]:
+def export_base_cv_files(text: str, dest_dir: Path, *, allow_partial: bool = False) -> tuple[Path, Path | None]:
     """Write English base CV DOCX + PDF. Returns (docx_path, pdf_path)."""
     from app.ats.docx_export import export_resume_docx
-    from app.ats.pdf_export import export_resume_pdf
 
     dest_dir.mkdir(parents=True, exist_ok=True)
     resume = parse_base_cv_text(text)
     docx_path = dest_dir / resume_filename(lang="en", job_title="Base", ext="docx")
     pdf_path = dest_dir / resume_filename(lang="en", job_title="Base", ext="pdf")
     export_resume_docx(resume, docx_path)
-    export_resume_pdf(resume, pdf_path)
+    try:
+        from app.ats.pdf_export import export_resume_pdf
+        export_resume_pdf(resume, pdf_path)
+    except Exception:
+        if not allow_partial:
+            raise
+        logger.exception("Base CV PDF export failed; DOCX remains available")
+        pdf_path = None
     return docx_path, pdf_path

@@ -140,7 +140,7 @@ echo.
 echo  Starting Codex PC worker...
 echo    API:       %WORKER_REMOTE_URL%
 echo    Workspace: %JOB_SEARCH_WORKSPACE%
-echo    Tip: run "agent login" once if needed.
+echo    Tip: run "codex login" once if needed.
 echo.
 
 cd /d "%BACKEND%"

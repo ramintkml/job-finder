@@ -1,0 +1,63 @@
+name: Verify and Deploy
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: pip install -r backend/requirements-vps.txt
+      - run: python -m unittest discover -s backend/tests -v
+        env:
+          PYTHONPATH: backend
+      - run: npm ci --prefix frontend
+      - run: npm run build --prefix frontend
+      - name: Package reviewed source and built dashboard
+        if: github.event_name != 'pull_request'
+        run: |
+          printf '%s\n' "$GITHUB_SHA" > REVISION
+          tar --exclude='__pycache__' --exclude='*.pyc' -czf release.tgz REVISION README.md AGENT_BRIEF.md backend/app backend/requirements-vps.txt frontend/dist deploy/ci_entrypoint.sh deploy/ci_deploy.sh deploy/ecosystem.config.json
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: release
+          path: release.tgz
+          retention-days: 3
+  deploy:
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    needs: verify
+    runs-on: ubuntu-latest
+    concurrency:
+      group: job-finder-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+      - name: Configure dedicated SSH identity
+        env:
+          PRIVATE_KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Deploy exact tested revision and verify health
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 "$VPS_USER@$VPS_HOST" "deploy $GITHUB_SHA" < release.tgz
