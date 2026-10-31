@@ -53,9 +53,9 @@ jobs:
           KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$PRIVATE_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
       - name: Deploy exact tested revision and verify health
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
