@@ -147,12 +147,13 @@ def api_write_fallback(path: str):
 
 @app.get("/api/health")
 def health():
+    from app.telegram.bot import review_bot
     return {
         "status": "ok",
         "revision": settings.deployment_revision,
         "ai_engine": "codex",
-        "revision": settings.deployment_revision,
-        "ai_engine": "codex",
+        "telegram_bot_username": (review_bot._me or {}).get("username"),
+        "telegram_bot_ready": bool(review_bot.configured and review_bot._running),
         "telegram_connected": telegram_service.connected,
         "telegram_needs_auth": telegram_service.needs_auth,
         "ui_mode": _ui_mode(),

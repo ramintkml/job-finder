@@ -68,7 +68,6 @@ class Settings(BaseSettings):
     review_timeout_minutes: int = 15
 
     deployment_revision: str = ""
-    deployment_revision: str = ""
     dashboard_admin_password: str = ""
 
     host: str = "127.0.0.1"

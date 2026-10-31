@@ -62,3 +62,74 @@
 @media(max-width:850px) { .login-page {padding:22px 20px 17px;} .login-header {margin-bottom:22px;} .login-layout {grid-template-columns:1fr .95fr;min-height:630px;} .login-story {padding:28px 23px 22px;} .login-story h2 {font-size:29px;} .login-story-description {font-size:10px;} .login-form-panel {padding:34px 25px 22px;} .login-art {transform:scale(.88); margin-left:-20px;margin-right:-20px;} .login-float-match {right:-6px;} .login-float-resume {left:-9px;} }
 @media(max-width:640px) { .login-page {padding:23px 18px 18px;} .login-header {margin-bottom:25px;} .login-brand {font-size:21px;} .login-brand-mark {width:34px;height:34px;border-radius:10px;} .login-header-note {font-size:8px;} .login-layout {grid-template-columns:1fr;min-height:0;padding:0;border-radius:20px;} .login-story {display:none;} .login-form-panel {padding:33px 25px 23px;min-height:555px;} .login-form-content {width:min(340px,100%);} .login-welcome-icon {width:45px;height:45px;margin-bottom:23px;} .login-form-content h1 {font-size:30px;} .login-form-intro {font-size:13px;margin-bottom:29px;} .login-form>label {font-size:12px;} .login-help-toggle {font-size:11px;} .login-telegram-note {font-size:10px;} .login-form-footnote {font-size:8px;margin-top:31px;} .login-footer {font-size:8px;margin-top:22px;} }
 @media(prefers-reduced-motion:reduce) { .login-page *, .login-page *::before, .login-page *::after {animation:none!important;transition:none!important;} }
+
+/* Fit the authentication experience into the visible viewport, including short screens. */
+body.login-active { overflow:hidden; }
+.login-page { height:100dvh; min-height:0; overflow:hidden; padding:clamp(12px,2.4vh,24px) clamp(18px,4vw,68px) clamp(10px,1.6vh,18px); gap:clamp(10px,2vh,22px); }
+.login-header { flex:none; margin:0 auto; min-height:34px; }
+.login-layout { flex:1; min-height:0; max-height:690px; margin:auto; }
+.login-story { min-height:0; padding:clamp(22px,3.8vh,38px) 38px 22px; }
+.login-story h2 { font-size:clamp(27px,3.8vh,38px); margin:14px 0 10px; }
+.login-story-description { font-size:12px; }
+.login-art { flex:1; min-height:0; max-height:305px; margin:14px 0 8px; }
+.login-story-footer { flex:none; }
+.login-form-panel { min-height:0; padding:clamp(16px,3.5vh,36px) 32px 20px; }
+.login-welcome-icon { width:40px; height:40px; margin-bottom:16px; border-radius:12px; }
+.login-section-label { line-height:18px; }
+.login-form-content h1 { font-size:30px; line-height:1.6; margin:6px 0; }
+.login-form-intro { font-size:12px; line-height:1.8; margin:0 0 22px; }
+.login-input-wrap { min-height:48px; }
+.login-submit { min-height:46px; margin-top:14px; }
+.login-help-toggle { margin-top:13px; }
+.login-divider { margin:22px 0 15px; }
+.login-telegram-note { margin-top:12px; font-size:9px; line-height:1.8; }
+.login-form-footnote { margin-top:22px; }
+.login-footer { flex:none; margin:0 auto; line-height:16px; }
+.login-page[data-help-open="true"] .login-divider,
+.login-page[data-help-open="true"] .login-features,
+.login-page[data-help-open="true"] .login-telegram-note { display:none; }
+@media(max-height:800px) and (min-width:641px) {
+  .login-story { padding:24px 30px 18px; }
+  .login-story h2 { font-size:29px; line-height:1.7; }
+  .login-art { transform:scale(.84); transform-origin:50% 60%; margin:2px -15px; }
+  .login-form-footnote { margin-top:14px; }
+}
+@media(max-width:850px) { .login-story {padding-inline:24px;} .login-form-panel {padding-inline:24px;} }
+@media(max-width:640px) {
+  .login-page {padding:16px 18px 12px; gap:14px;}
+  .login-layout {flex:1; max-width:440px; max-height:590px; padding:0;}
+  .login-form-panel {min-height:0; padding:24px 25px 18px;}
+  .login-header-note {font-size:8px;}
+  .login-footer {font-size:8px;}
+}
+@media(max-height:700px) {
+  .login-welcome-icon {margin-bottom:12px; width:36px;height:36px;}
+  .login-form-intro {margin-bottom:17px;}
+  .login-divider {margin:17px 0 11px;}
+  .login-form-footnote {margin-top:14px;}
+  .login-form-content h1 {font-size:27px;}
+}
+@media(max-height:620px) {
+  .login-story,.login-divider,.login-features,.login-telegram-note {display:none;}
+  .login-layout {grid-template-columns:1fr; max-width:460px;}
+  .login-form-panel {padding:18px 26px;}
+  .login-form-content {max-width:340px;}
+  .login-welcome-icon {margin-bottom:10px;}
+  .login-form-footnote {margin-top:14px;}
+  .login-page {gap:10px; padding-block:12px;}
+}
+@media(max-height:480px) {
+  .login-welcome-icon,.login-section-label,.login-form-intro,.login-form-footnote,.login-footer,.login-header-note {display:none;}
+  .login-page {padding-block:9px; gap:8px;}
+  .login-header {min-height:28px;}
+  .login-brand-mark {width:28px; height:28px; border-radius:9px;}
+  .login-brand {font-size:19px;}
+  .login-form-panel {padding:10px 22px;}
+  .login-form-content h1 {font-size:23px; margin:0 0 9px; line-height:1.5;}
+  .login-form>label {font-size:11px; margin-bottom:6px;}
+  .login-input-wrap {min-height:43px;}
+  .login-input-wrap input {padding-block:10px;}
+  .login-submit {min-height:42px; margin-top:10px;}
+  .login-help-toggle {font-size:10px; margin-top:8px;}
+  .login-help,.login-error {font-size:10px; line-height:1.6; padding:8px; margin-top:8px;}
+}
