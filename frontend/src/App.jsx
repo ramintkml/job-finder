@@ -1,3 +1,4 @@
+import Login from "./Login";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 
@@ -582,17 +583,15 @@ export default function App() {
     event.preventDefault();
     setPending(true); setError("");
     try { setSession(await api.login(password)); setPassword(""); }
-    catch (err) { setError(err.message); }
+    catch (err) {
+      setError(err.status === 401 ? "رمز ورود درست نیست. دوباره امتحان کنید." :
+        err.status === 429 ? "تعداد تلاش‌ها زیاد شده؛ چند دقیقه دیگر دوباره امتحان کنید." :
+        "ارتباط با سرویس برقرار نشد. کمی بعد دوباره تلاش کنید.");
+    }
     finally { setPending(false); }
   }
-  if (checking) return <main className="app-shell">Loading…</main>;
-  if (!session) return <main className="app-shell" style={{maxWidth: 440, margin: "10vh auto", padding: 24}}>
-    <h1>Career Pilot</h1><p>Sign in to your dashboard.</p>
-    <form onSubmit={login}>
-      <label>Dashboard password <input type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
-      <button type="submit" disabled={pending}>{pending ? "Signing in…" : "Sign in"}</button>
-      {error && <p role="alert">{error}</p>}
-    </form>
-  </main>;
+  if (checking || !session) return <Login checking={checking} password={password}
+    onPasswordChange={value => { setPassword(value); setError(""); }}
+    onSubmit={login} pending={pending} error={error} />;
   return <><div style={{textAlign: "right", padding: 12}}><button onClick={async () => {await api.logout(); setSession(null);}}>Sign out</button></div><Dashboard session={session} /></>;
 }

@@ -13,7 +13,9 @@ async function fetchJson(path, options = {}) {
     const message = Array.isArray(detail)
       ? detail.map((item) => item.msg || item).join("; ")
       : detail || res.statusText;
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = res.status;
+    throw error;
   }
   if (res.status === 204) return null;
   return res.json();
