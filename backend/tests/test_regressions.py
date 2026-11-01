@@ -245,6 +245,27 @@ class RegressionTests(unittest.TestCase):
         for item in result['send_documents']:
             self.assertTrue(Path(item['path']).is_relative_to(self.root/'user_outputs/101'))
 
+    def test_pdf_runtime_preflight_exports_real_documents(self):
+        from app.ats.pdf_runtime import check_pdf_runtime
+        result = check_pdf_runtime()
+        self.assertEqual(result['status'], 'PDF_RUNTIME_OK')
+        self.assertGreater(result['pdf_bytes'], 1000)
+        self.assertFalse(result['user_data_used'])
+        self.assertFalse(result['network_used'])
+
+    def test_pdf_runtime_preflight_rejects_cpu_incompatible_numpy(self):
+        from app.ats.pdf_runtime import check_pdf_runtime
+        with patch('app.ats.pdf_runtime.import_module', side_effect=RuntimeError('X86_V2 unsupported')):
+            with self.assertRaisesRegex(RuntimeError, 'NumPy cannot initialize on this CPU'):
+                check_pdf_runtime()
+
+    def test_numpy_cpu_compatibility_pin_is_preserved_in_both_installs(self):
+        backend = Path(__file__).resolve().parents[1]
+        for name in ('requirements.txt', 'requirements-vps.txt'):
+            requirements = (backend / name).read_text(encoding='utf-8').splitlines()
+            numpy_requirements = [line.strip() for line in requirements if line.strip().startswith('numpy')]
+            self.assertEqual(numpy_requirements, ['numpy==2.3.5'])
+
     def test_admin_matching_does_not_accept_suffixes(self):
         from app.telegram.bot import review_bot
         with patch.object(settings,'telegram_admin_ids','123456789'), patch.object(settings,'telegram_review_chat_id','123456789'):

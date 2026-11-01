@@ -25,6 +25,9 @@ PY
 # Install dependencies before touching running source. Additive dependency changes
 # preserve rollback compatibility with the prior release.
 backend/venv/bin/python -m pip install -q -r "$RELEASE/backend/requirements-vps.txt"
+# Exercise native imports and the actual exporter on the TARGET CPU too.
+# A green CI runner alone cannot detect an older VPS instruction set.
+PYTHONPATH="$RELEASE/backend" backend/venv/bin/python -m app.ats.pdf_runtime
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 BACKUP="$APP/.deploy/backups/${STAMP}_${SHA}.tgz"
 mkdir -p "$APP/.deploy/backups"

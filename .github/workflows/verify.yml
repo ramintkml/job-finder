@@ -20,6 +20,10 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: pip install -r backend/requirements-vps.txt
+      - name: Verify native PDF runtime before tests
+        run: python -m app.ats.pdf_runtime
+        env:
+          PYTHONPATH: backend
       - run: python -m unittest discover -s backend/tests -v
         env:
           PYTHONPATH: backend

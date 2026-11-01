@@ -8,7 +8,8 @@ pydantic-settings>=2.6.0
 python-dotenv>=1.0.1
 httpx>=0.28.0
 python-multipart>=0.0.9
-numpy>=1.26.0
+# NumPy 2.4+ requires X86_V2, unavailable on the production KVM CPU.
+numpy==2.3.5
 beautifulsoup4>=4.12.0
 python-docx>=1.1.0
 fpdf2>=2.8.0
