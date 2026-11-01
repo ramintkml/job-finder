@@ -17,7 +17,7 @@ export default defineConfig({
         name: "Career Pilot",
         short_name: "Career Pilot",
         description: "LinkedIn job finder dashboard",
-        theme_color: "#0f6e56",
+        theme_color: "#173c34",
         background_color: "#f3f1eb",
         display: "standalone",
         orientation: "any",

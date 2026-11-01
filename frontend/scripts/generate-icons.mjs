@@ -20,7 +20,7 @@ async function writeMaskable(size, filename) {
       width: size,
       height: size,
       channels: 4,
-      background: { r: 3, g: 105, b: 161, alpha: 1 },
+      background: { r: 23, g: 60, b: 52, alpha: 1 },
     },
   })
     .composite([{ input: innerBuf, gravity: "center" }])

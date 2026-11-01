@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
-import { BrandMark, Icon } from "./Login";
+import Icon from "./Icon";
+import BrandMark from "./BrandMark";
 import "./dashboard.css";
 
 const NAV = [{id:"overview", label:"نمای کلی", icon:"grid"}, {id:"jobs", label:"درخواست‌های من", icon:"briefcase"}, {id:"settings", label:"تنظیمات", icon:"settings"}];
