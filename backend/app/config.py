@@ -69,6 +69,10 @@ class Settings(BaseSettings):
 
     deployment_revision: str = ""
     dashboard_admin_password: str = ""
+    auth_smtp_host: str = "smtp.gmail.com"
+    auth_smtp_port: int = 465
+    auth_smtp_user: str = ""
+    auth_smtp_password: str = ""
 
     host: str = "127.0.0.1"
     port: int = 8000

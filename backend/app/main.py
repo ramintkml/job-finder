@@ -123,6 +123,13 @@ async def same_origin_writes(request: Request, call_next):
         origin = request.headers.get("origin")
         if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
             return JSONResponse({"detail": "Invalid origin"}, status_code=403)
+        if request.headers.get("sec-fetch-site") == "cross-site":
+            return JSONResponse({"detail": "Invalid origin"}, status_code=403)
+        if request.cookies.get("career_refresh"):
+            import hmac
+            csrf = request.cookies.get("career_csrf", "")
+            if not csrf or not hmac.compare_digest(csrf, request.headers.get("x-csrf-token", "")):
+                return JSONResponse({"detail": "Invalid CSRF token"}, status_code=403)
     return await call_next(request)
 
 

@@ -25,6 +25,24 @@ function Score({ value, label }) {
   return <span className={`dash-score ${tone(value)}`} aria-label={`${label}: ${validScore(value) ? fa(value) : "هنوز محاسبه نشده"}`}>{validScore(value) ? fa(value) : "—"}<small>/۱۰۰</small></span>;
 }
 
+function DocumentPanel({app}) {
+  const [items,setItems]=useState([]),[busy,setBusy]=useState(""),[error,setError]=useState("");
+  const load=()=>api.documents(app.id).then(setItems).catch(e=>setError(e.message));
+  useEffect(()=>{load();const timer=setInterval(load,5000);return()=>clearInterval(timer);},[app.id]);
+  async function request(kind,language){setBusy(kind+language);setError("");try {await api.requestDocument(app.id,kind,language);await load();}catch(e){setError(e.message);}finally{setBusy("");}}
+  const assessment=app.ats_assessment||{};
+  return <div className="dash-documents"><h3>خروجی‌های این آگهی</h3><p>رزومه، هدفمند و کوتاه است؛ CV کامل شامل شرح سوابق پروفایل شماست.</p><div className="dash-detail-actions">{["resume","cv"].flatMap(kind=>["fa","en"].map(language=>{
+    const item=items.find(i=>i.kind===kind&&i.language===language),label=`${kind==="cv"?"CV کامل":"رزومه"} ${language==="fa"?"فارسی":"انگلیسی"}`;
+    return <div className="dash-document-choice" key={kind+language}>{item?.status==="ready"?<><strong>{label}</strong><a href={`/api/applications/${app.id}/documents/${item.id}/docx`} download>Word</a><a href={`/api/applications/${app.id}/documents/${item.id}/pdf`} download>PDF</a><button className="dash-button text" disabled={!!busy} onClick={()=>request(kind,language)}>بررسی نسخه تازه</button><small>{item.checks?.status==="passed"?"استخراج فایل بررسی شد":"فایل نیازمند مرور است"}</small>{item.checks?.questions?.map((q,i)=><p key={i}>{q}</p>)}</>:<button className="dash-button secondary" disabled={!!busy||item?.status==="pending"} onClick={()=>request(kind,language)}>{item?.status==="pending"?`${label} — در صف`:item?.status==="failed"?`تلاش دوباره: ${label}`:`ساخت ${label}`}</button>}</div>;
+  }))}</div>{error&&<p role="alert">{error}</p>}<div className="dash-ats-review"><h3>ارزیابی داخلی رزومه</h3><p>{assessment.notice||"امتیاز سامانه کارفرما یا احتمال قبولی نیست."}</p><p>تناسب شغلی: {validScore(app.fit_score)?fa(app.fit_score):"بررسی نشده"} · پوشش الزامات: {validScore(assessment.coverage_score)?fa(assessment.coverage_score):"بررسی نشده"} · سلامت فایل: {assessment.file_health?.status==="passed"?"بررسی شد":assessment.file_health?.status==="needs_review"?"نیازمند مرور":"بررسی نشده"}</p>{assessment.questions?.length>0&&<div><strong>اطلاعات تکمیلی</strong>{assessment.questions.map((q,i)=><p key={i}>{q}</p>)}<p>پاسخ‌ها را در ربات با /editcv ثبت و تأیید کنید، سپس رزومه را بهبود دهید.</p></div>}{assessment.requirements?.map((r,i)=><p key={i}><bdi>{r.requirement}</bdi>{r.required?" (ضروری)":""} — {r.status==="covered"?"در رزومه وجود دارد":"در رزومه پیدا نشد؛ سابقه تأیید شود"}{r.resume_evidence?.[0]&&<small dir="auto">{r.resume_evidence[0]}</small>}</p>)}</div></div>;
+}
+
+function AccountPanel({session,onSetup,onSession}) {
+  const [command,setCommand]=useState(""),[error,setError]=useState("");
+  async function link(){try{const r=await api.linkTelegram();setCommand(r.command);setError("");}catch(e){setError(e.message);}}
+  return <section className="dash-panel dash-account-panel"><div><strong>{session.username?`حساب ${session.username}`:"ورود تلگرام / مدیر"}</strong><p>{session.telegram_linked?"حساب به تلگرام متصل است؛ سوابق قبلی حفظ شده‌اند.":"برای دسترسی به رزومه و ارسال آگهی، حساب را به تلگرام متصل کنید."}</p></div>{!session.account_id?<button className="dash-button secondary" onClick={onSetup}>ساخت نام کاربری و رمز عبور</button>:!session.telegram_linked?<button className="dash-button secondary" onClick={link}>دریافت کد اتصال تلگرام</button>:null}{command&&<div><p>این دستور را تا ۱۰ دقیقه دیگر در گفت‌وگوی خصوصی ربات بفرستید:</p><code dir="ltr">{command}</code><button className="dash-button text" onClick={async()=>{try{onSession(await api.me());setCommand("");}catch(e){setError(e.message);}}}>فرستادم؛ بررسی اتصال</button></div>}{error&&<p role="alert">{error}</p>}</section>;
+}
+
 function ApplicationRow({ app, open, onToggle, onDelete, busy }) {
   const identity = app.company || app.title || "؟";
   const color = [...identity].reduce((sum,char) => sum + char.charCodeAt(0),0) % 4;
@@ -32,7 +50,7 @@ function ApplicationRow({ app, open, onToggle, onDelete, busy }) {
     <div className="dash-job-grid">
       <div className="dash-job-identity"><span className={`dash-company color-${color}`} aria-hidden="true">{identity.trim().charAt(0).toUpperCase()}</span><div><button className="dash-job-title" type="button" onClick={onToggle} aria-expanded={open}><bdi>{app.title || "فرصت شغلی بدون عنوان"}</bdi></button><span className="dash-company-name"><bdi>{app.company || "نام شرکت ثبت نشده"}</bdi></span></div></div>
       <div className="dash-score-cell"><span className="dash-mobile-label">تناسب</span><Score value={app.fit_score} label="تناسب شغلی"/></div>
-      <div className="dash-score-cell"><span className="dash-mobile-label">ATS</span><Score value={app.ats_score} label="ATS"/></div>
+      <div className="dash-score-cell"><span className="dash-mobile-label">پوشش</span><Score value={app.ats_score} label="پوشش الزامات"/></div>
       <div className="dash-status-cell"><span className={`dash-status ${app.status === "failed" ? "failed" : app.status === "ready" ? "ready" : "waiting"}`}><i/>{STATUS[app.status] || "در حال بررسی"}</span></div>
       <time className="dash-date" dateTime={app.created_at || undefined}>{when(app.created_at)}</time>
       <button type="button" className={`dash-icon-button dash-expand${open ? " is-open" : ""}`} aria-label={`${open ? "بستن" : "نمایش"} جزئیات ${app.title || "درخواست"}`} aria-expanded={open} onClick={onToggle}><Icon name="chevron" size={17}/></button>
@@ -42,8 +60,9 @@ function ApplicationRow({ app, open, onToggle, onDelete, busy }) {
       {app.summary && <p className="dash-detail-copy" dir="auto">{app.summary}</p>}
       {app.ats_notes && <div className="dash-detail-note"><strong>نکات رزومه</strong><p dir="auto">{app.ats_notes}</p></div>}
       {Array.isArray(app.ats_keyword_missing) && app.ats_keyword_missing.length > 0 && <div className="dash-keywords"><span>موارد قابل بررسی:</span>{app.ats_keyword_missing.slice(0,8).map((word,index) => <span className="dash-keyword" key={`${word}-${index}`}><bdi>{word}</bdi></span>)}</div>}
-      <div className="dash-detail-actions">
-        {app.has_resume_docx ? <a className="dash-button primary" href={api.downloadApplicationResumeUrl(app.id)} download><Icon name="download" size={17}/>دانلود رزومه Word</a> : <span className="dash-text-note">فایل رزومه هنوز آماده نیست.</span>}
+      <DocumentPanel app={app}/><div className="dash-detail-actions">
+        {app.has_resume_docx ? <a className="dash-button primary" href={api.downloadApplicationResumeUrl(app.id)} download><Icon name="download" size={17}/>دانلود رزومه اولیه Word</a> : <span className="dash-text-note">فایل رزومه هنوز آماده نیست.</span>}
+        {app.has_resume_pdf&&<a className="dash-button secondary" href={`/api/applications/${app.id}/resume.pdf`} download>رزومه اولیه PDF</a>}
         {app.job_url && /^https?:\/\//i.test(app.job_url) && <a className="dash-button secondary" href={app.job_url} target="_blank" rel="noopener noreferrer"><Icon name="external" size={16}/>مشاهده آگهی</a>}
         <button className="dash-button text danger" type="button" disabled={busy} onClick={onDelete}><Icon name="trash" size={16}/>حذف درخواست</button>
       </div>
@@ -51,7 +70,7 @@ function ApplicationRow({ app, open, onToggle, onDelete, busy }) {
   </article>;
 }
 
-export default function Dashboard({ session, onLogout }) {
+export default function Dashboard({ session, onLogout, onSetup, onSession }) {
   const [tab,setTab] = useState("overview");
   const [applications,setApplications] = useState(null);
   const [health,setHealth] = useState(null);
@@ -126,7 +145,7 @@ export default function Dashboard({ session, onLogout }) {
   const username=health?.telegram_bot_username;
   const botUrl=typeof username==="string" && /^[a-zA-Z0-9_]{5,32}$/.test(username) ? `https://t.me/${username}` : null;
   const sendingAction = label => botUrl ? <a className="dash-button primary" href={botUrl} target="_blank" rel="noopener noreferrer"><Icon name="plus" size={18}/>{label}</a> : <button type="button" className="dash-button primary" onClick={()=>setGuideOpen(true)}><Icon name="plus" size={18}/>{label}</button>;
-  const renderList = list => listError ? <div className="dash-empty"><Icon name="alert" size={30}/><h3>اطلاعات دریافت نشد</h3><p>{listError}</p><button className="dash-button secondary" onClick={()=>run("refresh",refresh)} disabled={Boolean(busy)}>تلاش دوباره</button></div> : loading && applications===null ? <div className="dash-skeleton" aria-label="در حال دریافت درخواست‌ها" role="status"><i/><i/><i/></div> : list.length ? <div className="dash-table"><div className="dash-table-head dash-job-grid" aria-hidden="true"><span>فرصت شغلی</span><span>تناسب</span><span>ATS</span><span>وضعیت</span><span>تاریخ ثبت</span><span/></div>{list.map(app=><ApplicationRow key={app.id} app={app} open={openId===app.id} onToggle={()=>setOpenId(id=>id===app.id?null:app.id)} busy={Boolean(busy)} onDelete={()=>setDeleteTarget(app)}/>)}</div> : <div className="dash-empty"><span className="dash-empty-icon"><Icon name={apps.length ? "search" : "briefcase"} size={28}/></span><h3>{apps.length ? "درخواستی با این مشخصات پیدا نشد" : "اولین فرصت شما از اینجا شروع می‌شود"}</h3><p>{apps.length ? "عبارت جست‌وجو یا فیلترها را تغییر دهید." : "یک آگهی به ربات بفرستید؛ ارزیابی و رزومه شما اینجا نمایش داده می‌شود."}</p>{apps.length ? <button type="button" className="dash-button secondary" onClick={()=>{setQuery("");setFilter("all");}}>پاک‌کردن فیلترها</button> : sendingAction("ارسال اولین آگهی")}</div>;
+  const renderList = list => listError ? <div className="dash-empty"><Icon name="alert" size={30}/><h3>اطلاعات دریافت نشد</h3><p>{listError}</p><button className="dash-button secondary" onClick={()=>run("refresh",refresh)} disabled={Boolean(busy)}>تلاش دوباره</button></div> : loading && applications===null ? <div className="dash-skeleton" aria-label="در حال دریافت درخواست‌ها" role="status"><i/><i/><i/></div> : list.length ? <div className="dash-table"><div className="dash-table-head dash-job-grid" aria-hidden="true"><span>فرصت شغلی</span><span>تناسب</span><span>پوشش</span><span>وضعیت</span><span>تاریخ ثبت</span><span/></div>{list.map(app=><ApplicationRow key={app.id} app={app} open={openId===app.id} onToggle={()=>setOpenId(id=>id===app.id?null:app.id)} busy={Boolean(busy)} onDelete={()=>setDeleteTarget(app)}/>)}</div> : <div className="dash-empty"><span className="dash-empty-icon"><Icon name={apps.length ? "search" : "briefcase"} size={28}/></span><h3>{apps.length ? "درخواستی با این مشخصات پیدا نشد" : "اولین فرصت شما از اینجا شروع می‌شود"}</h3><p>{apps.length ? "عبارت جست‌وجو یا فیلترها را تغییر دهید." : "یک آگهی به ربات بفرستید؛ ارزیابی و رزومه شما اینجا نمایش داده می‌شود."}</p>{apps.length ? <button type="button" className="dash-button secondary" onClick={()=>{setQuery("");setFilter("all");}}>پاک‌کردن فیلترها</button> : sendingAction("ارسال اولین آگهی")}</div>;
 
   return <div className="workspace" dir="rtl" lang="fa">
     <aside className="dash-sidebar">
@@ -142,6 +161,7 @@ export default function Dashboard({ session, onLogout }) {
       <div className="dash-content">
         <div className="dash-page-heading"><div><span className="dash-eyebrow">مسیر شغلی شما، یک قدم روشن‌تر</span><h1>{tab==="overview"?"نگاهی به مسیر پیش رو":tab==="jobs"?"درخواست‌های من":"تنظیمات فضای کار"}</h1><p>{tab==="overview"?"فرصت‌ها، ارزیابی‌ها و رزومه‌هایتان را یکجا دنبال کنید.":tab==="jobs"?"همه فرصت‌هایی که بررسی کرده‌اید، همراه با نتیجه و رزومه متناسب.":"اطلاعات فردی و اتصال‌های خود را مدیریت کنید."}</p></div>{tab!=="settings"&&sendingAction("ارسال آگهی جدید")}</div>
         {flash&&<div role={flash.type==="error"?"alert":"status"} className={`dash-flash ${flash.type}`}><Icon name={flash.type==="error"?"alert":"check"} size={18}/><span>{flash.message}</span><button type="button" className="dash-icon-button" aria-label="بستن پیام" onClick={()=>setFlash(null)}><Icon name="close" size={16}/></button></div>}
+        {tab==="overview"&&<AccountPanel session={session} onSetup={onSetup} onSession={onSession}/>}
         {tab==="overview"&&<>
           <section className="dash-welcome"><div><span className="dash-welcome-label"><Icon name="sparkle" size={16}/>فرصت بعدی، با آمادگی بیشتر</span><h2>تجربه شما، نقطه شروع ماست.</h2><p>آگهی را در ربات بفرستید؛ تناسبش را بررسی کنید و رزومه‌ای متناسب با همان فرصت بگیرید.</p><button type="button" onClick={()=>setTab("jobs")}>مشاهده درخواست‌ها<Icon name="arrow" size={17}/></button></div><div className="dash-welcome-art" aria-hidden="true"><div className="dash-mini-sheet"><Icon name="file" size={25}/><i/><i/><i/><span><Icon name="check" size={12}/>YOUR NEXT STEP</span></div><span className="dash-art-star"><Icon name="sparkle" size={26}/></span></div></section>
           <section className="dash-stats" aria-label="خلاصه درخواست‌ها">{[{label:"کل درخواست‌ها",value:stats.total,icon:"briefcase",note:"فرصت‌های ثبت‌شده شما",accent:true},{label:"رزومه آماده",value:stats.ready,icon:"file",note:"آماده دریافت فایل Word"},{label:"تناسب بالا",value:stats.strong,icon:"chart",note:"امتیاز تناسب ۷۵ یا بیشتر"},{label:"در حال پردازش",value:stats.processing,icon:"clock",note:"در انتظار تکمیل نتیجه"}].map(stat=><article className={`dash-stat${stat.accent?" accent":""}`} key={stat.label}><div><span>{stat.label}</span><span className="dash-stat-icon"><Icon name={stat.icon} size={19}/></span></div><strong>{applications===null?"—":fa(stat.value)}</strong><p>{stat.note}</p></article>)}</section>

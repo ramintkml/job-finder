@@ -48,16 +48,10 @@ def application_actions_markup(app, *, improve_btn: dict | None = None) -> dict:
     )
     if improve_btn is None:
         improve_btn = kb._btn("🔄 Improve (evaluation)", f"ut:improve_codex:{app_id}")
-    rows = [
-        [
-            improve_btn,
-            kb._btn("🇮🇷 ترجمه فارسی", f"ut:fa:{app_id}"),
-        ]
-    ]
-    pdf_row = [kb._btn("📄 PDF English", f"ut:pdf_en:{app_id}")]
-    if has_fa:
-        pdf_row.append(kb._btn("📄 PDF فارسی", f"ut:pdf_fa:{app_id}"))
-    rows.append(pdf_row)
+    rows = [[improve_btn]]
+    for kind, label in (("resume", "رزومه"), ("cv", "CV کامل")):
+        rows.append([kb._btn(label+" فارسی", f"ut:document:{kind}:fa:{app_id}"),
+                     kb._btn(label+" انگلیسی", f"ut:document:{kind}:en:{app_id}")])
     return kb._markup(rows)
 
 
@@ -623,6 +617,23 @@ def start_combined(telegram_user_id: int) -> dict:
 
 
 async def handle_tool_callback(data: str, *, telegram_user_id: int) -> dict:
+    if data.startswith("ut:document:"):
+        from app.services.documents import request_document
+        from app.telegram.bot import review_bot
+        from fastapi import HTTPException
+        try:
+            _, _, kind, language, app_id = data.split(":")
+            with SessionLocal() as db:
+                app = _load_app_for_user(db, int(app_id), telegram_user_id)
+                if not app: return {"message": "درخواست پیدا نشد."}
+                item = request_document(db, app, telegram_user_id, kind, language)
+                if item.status == "ready":
+                    for path in (item.docx_path, item.pdf_path):
+                        if path and Path(path).is_file(): await review_bot.send_document(Path(path), chat_id=telegram_user_id)
+                    return {"message": "فایل‌های آماده ارسال شدند."}
+                return {"message": "⏳ ساخت خروجی در صف است. بعد از آماده شدن همین‌جا ارسال می‌شود."}
+        except (ValueError, HTTPException) as exc:
+            return {"message": str(getattr(exc,"detail",exc))}
     """Handle ut:* callbacks (user tools)."""
     if data.startswith("ut:cv:"):
         parts = data.split(":")

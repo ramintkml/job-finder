@@ -257,6 +257,12 @@ def build_payload(db: Session, job_type: str, entity_id: int, extra: dict | None
             if not re.fullmatch(r"[a-f0-9]{32}", str(payload.get(key) or "")):
                 raise ValueError("Invalid CV interview request")
         payload["chat_id"] = int(entity_id)
+    elif job_type == "document_variant":
+        from app.database import DocumentArtifact
+        item = db.get(DocumentArtifact, entity_id)
+        if not item: raise ValueError("Document not found")
+        payload = {"artifact_id": item.id, "kind": item.kind, "language": item.language,
+                   "source_text": item.source_text, "telegram_user_id": item.owner_id}
     elif job_type == JOB_CODEX_APPLY:
         # Payload is fully provided via `extra` at enqueue time.
         from app.services.cv_service import read_cv

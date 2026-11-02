@@ -117,15 +117,54 @@ and save confirmation remain with the user.
 
 ## Dashboard and API
 
-The web dashboard requires sign-in. Administrator login uses
-`DASHBOARD_ADMIN_PASSWORD`; an unset password fails closed. Telegram Mini App
-launch data can authenticate an existing active Telegram user; that user can
-only see, download and delete their own applications. Shared settings and
-operator integrations are restricted to administrators.
+The web dashboard supports username/email + password registration and sign-in.
+Passwords use salted scrypt hashes. Access JWTs (HS256, fixed algorithm, issuer and
+audience) expire after 15 minutes; rotating opaque refresh tokens are stored only
+as hashes in revocable server-side sessions. Session cookies are HttpOnly and
+SameSite=Strict, Secure over HTTPS. Browser writes also require the double-submit
+CSRF header. "Remember me" persists for 30 days; ordinary refresh sessions last
+12 hours. Logout and password reset revoke sessions immediately.
 
-Sessions use HttpOnly, SameSite cookies. Use HTTPS for public deployment. Workers
-use Bearer authentication plus a per-claim token; the shared worker credential
-is not a dashboard password. Cross-origin browser writes are rejected.
+An existing operator can initially sign in as `admin` using
+`DASHBOARD_ADMIN_PASSWORD`, then choose **ساخت نام کاربری و رمز عبور**. Creating
+an admin web account disables this bootstrap password login. A Telegram-authenticated
+user can register credentials on the same owner identity. New web accounts use an
+isolated identity until connected: generate a one-use, ten-minute code in the
+dashboard, then send `/link CODE` in the bot's private chat. Existing Telegram CVs,
+subscriptions and applications remain untouched; a Telegram identity already linked
+to another account cannot be claimed. All personal APIs derive ownership from the
+current authenticated account; shared settings remain admin-only.
+
+Email recovery sends a one-use code (30 minutes) and never discloses whether an
+email exists. Configure `AUTH_SMTP_HOST`, `AUTH_SMTP_PORT` (implicit TLS, default 465),
+`AUTH_SMTP_USER`, `AUTH_SMTP_PASSWORD`, or use the operator's existing encrypted
+Gmail settings. Reset codes are hashed in storage, never returned by the API or
+logged. SMTP delivery failures are logged without credentials/tokens.
+
+### Resume, full CV and internal ATS review
+
+Every posting first generates a concise targeted resume (normally 1-2 pages), in
+Persian for Persian postings and English otherwise. The result's buttons request
+**رزومه فارسی**, **رزومه انگلیسی**, **CV کامل فارسی**, **CV کامل انگلیسی** on demand,
+in both Word and PDF. A full CV uses an immutable snapshot of the complete current
+base profile; a resume translation uses the existing targeted resume. Neither
+changes the saved profile. Missing facts become questions; answers must go through
+the existing preview/confirmation CV editor. New base-profile revisions produce
+new document snapshots; repeated requests for the same source reuse the output.
+
+ATS v3 reports internal job fit, weighted requirement coverage and actual file
+health separately. It is not an employer ATS score or a hiring probability.
+Required requirements carry three times the weight of preferred requirements.
+Requirements from AI must have verifiable verbatim JD quotations. Skill matching
+uses Unicode normalization and token boundaries (Java != JavaScript, SQL != NoSQL),
+with explicit aliases and Persian headings. Formatting is never awarded by
+assumption; DOCX/PDF text extraction, contact preservation, columns/tables and file
+size are inspected on the real files. Failed/uncertain checks are shown for review.
+Old scores are marked legacy rather than mixed with v3. Keyword checks on completion
+are deterministic and never enqueue another AI call while the worker is completing.
+
+Workers use Bearer authentication plus per-claim tokens, independent of web JWTs.
+Use HTTPS for public deployment.
 
 ## Deployment and upgrade
 

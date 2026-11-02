@@ -104,6 +104,7 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual(self.client.post('/api/auth/login', json={'password':'wrong'}).status_code,401)
         result = self.client.post('/api/auth/login', json={'password':'test-admin-password'})
         self.assertEqual(result.status_code,200)
+        self.client.headers['X-CSRF-Token']=self.client.cookies.get('career_csrf')
         self.assertIn('HttpOnly',result.headers['set-cookie'])
         self.assertEqual(self.client.get('/api/auth/me').status_code,200)
         self.client.post('/api/auth/logout')
@@ -316,6 +317,7 @@ class RegressionTests(unittest.TestCase):
             return urlencode(fields)
         with patch.object(settings,'telegram_review_bot_token',token):
             self.assertEqual(self.client.post('/api/auth/login',json={'init_data':make_data()}).status_code,200)
+            self.client.headers['X-CSRF-Token']=self.client.cookies.get('career_csrf')
             self.assertEqual(self.client.get('/api/auth/me').json()['telegram_user_id'],101)
             self.assertEqual(self.client.post('/api/auth/login',json={'init_data':make_data(600)}).status_code,401)
 

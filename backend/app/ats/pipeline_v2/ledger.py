@@ -173,8 +173,8 @@ def ledger_prompt_block(ledger: KeywordLedger) -> str:
     return f"""
 KEYWORD LEDGER v2 (LOCKED — obey exactly):
 - Claim (write EXACT spelling in Skills; weave into Summary/bullets): {fmt(claim)}
-- Bridge (also put JD spelling in Skills; bullets may use bridge phrase): {fmt(bridge)}
+- Bridge (unconfirmed gap; ask the user, NEVER list as a possessed skill): {fmt(bridge)}
 - Omit (NEVER invent / never list): {fmt(omit, 20)}
-- keywords_from_jd MUST be exactly the Claim+Bridge write_as list (for scoring).
+- Score against all JD requirements, including missing ones; never hide Omit/Bridge gaps.
 - Do not drop Claim terms. Prefer JD spelling over aliases (e.g. write "machine learning" not only "ML").
 """

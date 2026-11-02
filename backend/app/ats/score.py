@@ -163,7 +163,7 @@ def _looks_like_edu_line(line: str) -> bool:
 
 
 def _is_junk_keyword(keyword: str) -> bool:
-    kl = re.sub(r"[^a-z0-9+#.\s'-]+", " ", (keyword or "").lower()).strip()
+    kl = re.sub(r"[^a-z0-9\u0600-\u06ff+#.\s'-]+", " ", (keyword or "").lower()).strip()
     if not kl or kl in _KEYWORD_JUNK:
         return True
     parts = [p for p in re.split(r"\s+", kl) if p]
@@ -172,28 +172,20 @@ def _is_junk_keyword(keyword: str) -> bool:
     return False
 
 
+def normalize_text(value: str) -> str:
+    import unicodedata
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", value or "").lower().translate(str.maketrans("يك٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "یک01234567890123456789")).replace("\u200c", " ")).strip()
+
+
 def keyword_in_text(keyword: str, text: str) -> bool:
-    """Match JD phrases without requiring the word 'Experience' or curly quotes."""
-    raw = (keyword or "").strip().lower()
-    hay = (text or "").lower()
-    if not raw or not hay:
-        return False
-    raw = raw.replace("\u2019", "'").replace("\u2018", "'")
-    hay = hay.replace("\u2019", "'").replace("\u2018", "'")
-    if raw in hay:
-        return True
-    stripped = re.sub(
-        r"\s+(experience|background|knowledge|skills?|proficiency)\s*$",
-        "",
-        raw,
-    ).strip()
-    if stripped and stripped != raw and stripped in hay:
-        return True
-    parts = [p for p in re.findall(r"[a-z0-9+#.]{3,}", stripped or raw) if p not in _KEYWORD_JUNK]
-    if len(parts) >= 2:
-        return all(p in hay for p in parts)
-    if len(parts) == 1:
-        return parts[0] in hay
+    raw, hay = normalize_text(keyword), normalize_text(text)
+    if not raw or not hay: return False
+    aliases = {"postgres": "postgresql", "js": "javascript", "ts": "typescript", "k8s": "kubernetes"}
+    forms = {raw, aliases.get(raw, raw)}
+    forms.update(k for k,v in aliases.items() if v == raw)
+    for form in forms:
+        pattern = re.escape(form).replace(r"\ ", r"[\s\u200c-]+")
+        if re.search(r"(?<![\w+#])" + pattern + r"(?![\w+#])", hay): return True
     return False
 
 
@@ -231,6 +223,10 @@ def extract_jd_keywords(job_description: str, ai_keywords: list[str] | None = No
             continue
         seen.add(key)
         out.append(k)
+    # Preserve Persian phrases and classify frequent JD words separately from skills.
+    if re.search(r"[آ-ی]", job_description or ""):
+        for term in ("مدیریت پروژه", "تحلیل داده", "یادگیری ماشین", "پایگاه داده", "توسعه نرم افزار", "طراحی رابط کاربری", "کار تیمی", "زبان انگلیسی", "ارتباط با مشتری"):
+            if keyword_in_text(term, job_description) and term not in out: out.append(term)
     return out[:40]
 
 
@@ -310,11 +306,11 @@ def score_resume_text(cv_text: str, job_description: str) -> dict[str, Any]:
     result = score_resume(resume, job_description, include_pdf=False)
     # User-uploaded DOCX: do not award full "our exporter" formatting marks
     cats = dict(result.get("categories") or {})
-    cats["formatting"] = 12
+    cats["formatting"] = 0
     total = sum(int(v or 0) for v in cats.values())
     result["categories"] = cats
-    result["total_score"] = total
-    result["band"] = score_band(total)
+    result["total_score"] = result.get("coverage_score")
+    result["band"] = score_band(result["total_score"]) if result["total_score"] is not None else "Unassessed"
     return result
 
 
@@ -358,6 +354,11 @@ def markdown_resume_to_dict(markdown: str) -> dict[str, Any]:
         current = None
 
     heading_map = {
+        "خلاصه": "summary", "خلاصه حرفه‌ای": "summary", "خلاصه حرفه ای": "summary",
+        "مهارت‌ها": "skills", "مهارت ها": "skills", "مهارت‌های کلیدی": "skills",
+        "پروژه‌ها": "projects", "پروژه های منتخب": "projects", "پروژه‌های منتخب": "projects",
+        "سوابق شغلی": "experience", "تجربه کاری": "experience", "تحصیلات": "education",
+        "زبان‌ها و گواهینامه‌ها": "certs", "پژوهش": "research",
         "summary": "summary",
         "professional summary": "summary",
         "profile": "summary",
@@ -596,8 +597,8 @@ def markdown_resume_to_dict(markdown: str) -> dict[str, Any]:
 def score_codex_resume(resume_md: str, job_description: str) -> dict[str, Any]:
     """Score a Codex-generated resume with the same ATS method as Freelancer automation.
 
-    Uses structured parsing + score_resume. Full formatting marks apply because we
-    export through our single-column DOCX exporter.
+    Uses structured parsing and the versioned internal coverage assessment.
+    Actual file health must be inspected separately after export.
     """
     resume = markdown_resume_to_dict(resume_md)
     return score_resume(resume, job_description, include_pdf=False)
@@ -611,110 +612,41 @@ def score_resume(
 ) -> dict[str, Any]:
     bullets = _all_bullets(resume)
     text = _resume_text(resume)
-    # Pipeline v2: keywords_from_jd is Claim+Bridge only — do NOT re-merge Omit JD tokens
-    ai_kw = resume.get("keywords_from_jd")
-    if isinstance(ai_kw, list) and ai_kw:
-        keywords: list[str] = []
-        seen: set[str] = set()
-        for k in ai_kw:
-            s = str(k).strip()
-            if not s:
-                continue
-            key = s.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            keywords.append(s)
-        keywords = keywords[:40]
-    else:
+    keywords = resume.get("keywords_from_jd")
+    if not isinstance(keywords, list) or not keywords:
         keywords = extract_jd_keywords(job_description, None)
-
-    matched: list[str] = []
-    missing: list[str] = []
-    for kw in keywords:
-        if keyword_in_text(kw, text):
-            matched.append(kw)
-        else:
-            missing.append(kw)
-    kw_ratio = (len(matched) / len(keywords)) if keywords else 0.5
-    keyword_score = round(20 * kw_ratio)
-
-    if bullets:
-        with_metric = sum(1 for b in bullets if METRIC_RE.search(b))
-        achievements = round(15 * (with_metric / len(bullets)))
-        verb_hits = sum(
-            1 for b in bullets if any(b.lower().startswith(v) for v in ACTION_VERBS)
-        )
-        action_verbs = round(10 * (verb_hits / len(bullets)))
-    else:
-        achievements = 0
-        action_verbs = 0
-
-    readability = 10
-    if any(len(b.split()) > 25 for b in bullets):
-        readability -= 2
-    if any(b.count(" and ") >= 2 and "," in b for b in bullets):
-        readability -= 2
-    if bullets:
-        starts_verb = [any(b.lower().startswith(v) for v in ACTION_VERBS) for b in bullets]
-        if any(starts_verb) and not all(starts_verb):
-            readability -= 2
-    if isinstance(resume.get("experience"), list):
-        for role in resume["experience"]:
-            if isinstance(role.get("description"), str) and role["description"].strip():
-                readability -= 2
-                break
-    readability = max(0, readability)
-
-    skills = resume.get("skills") or {}
-    if isinstance(skills, dict) and len(skills) >= 1:
-        skills_score = 10
-    elif isinstance(skills, list) and skills:
-        skills_score = 6
-    else:
-        skills_score = 0
-
-    projects = resume.get("projects") or []
-    projects_score = 10 if projects else 0
-
-    # DOCX/single-column export is enforced by our generator → full formatting marks
-    formatting = 20
-    if include_pdf:
-        formatting = 18  # slight caution: PDF only when requested
-
-    grammar = 5
-    # Light heuristic: mixed bullet end punctuation
-    if bullets:
-        ends_period = [b.rstrip().endswith(".") for b in bullets]
-        if any(ends_period) and not all(ends_period):
-            grammar -= 1
-    grammar = max(0, grammar)
-
+    keywords = list(dict.fromkeys(str(k).strip() for k in keywords if str(k).strip()))[:60]
+    required = resume.get("required_keywords") or []
+    matched = [k for k in keywords if keyword_in_text(k, text)]
+    missing = [k for k in keywords if k not in matched]
+    weight = lambda k: 3 if any(normalize_text(k)==normalize_text(x) for x in required) else 1
+    denominator = sum(weight(k) for k in keywords)
+    coverage = round(100 * sum(weight(k) for k in matched) / denominator) if denominator else None
+    if not text.strip(): coverage = 0 if denominator else None
+    has_content = bool(bullets or resume.get("skills") or resume.get("summary"))
+    metric_re = re.compile(r"(?:[0-9۰-۹٠-٩]+\s*(?:%|٪|percent|درصد|users|کاربر|hours|ساعت|requests|درخواست)|(?:reduced|increased|کاهش|افزایش)[^.!؟]{0,50}[0-9۰-۹٠-٩]+)", re.I)
+    metric_count = sum(bool(metric_re.search(str(b))) for b in bullets)
+    verbs = (*ACTION_VERBS, "ساختم", "طراحی", "پیاده", "توسعه", "بهبود", "خودکار", "کاهش", "افزایش", "مدیریت")
+    verb_count = sum(any(normalize_text(str(b)).startswith(v) for v in verbs) for b in bullets)
+    readability = max(0, 10 - sum(len(str(b).split())>35 for b in bullets)) if bullets else 0
     categories = {
-        "formatting": formatting,
-        "keyword_match": keyword_score,
-        "achievements": achievements,
-        "action_verbs": action_verbs,
+        "formatting": 0, # Only the actual exported artifact can establish file health.
+        "keyword_match": round((coverage or 0) * .6),
+        "achievements": round(10 * metric_count / len(bullets)) if bullets else 0,
+        "action_verbs": round(10 * verb_count / len(bullets)) if bullets else 0,
         "readability": readability,
-        "skills": skills_score,
-        "projects": projects_score,
-        "grammar": grammar,
+        "skills": 10 if resume.get("skills") else 0,
+        "projects": 0, # Project presence alone is not quality or job fit.
+        "grammar": 0, # Punctuation is not a grammar assessment.
     }
-    total = sum(categories.values())
-    return {
-        "total_score": total,
-        "band": score_band(total),
-        "categories": categories,
-        "keyword_matched": matched,
-        "keyword_missing": missing,
-        "max_scores": {
-            "formatting": 20,
-            "keyword_match": 20,
-            "achievements": 15,
-            "action_verbs": 10,
-            "readability": 10,
-            "skills": 10,
-            "projects": 10,
-            "grammar": 5,
-        },
-    }
+    evidence = []
+    for term in keywords:
+        snippets = [str(b) for b in bullets if keyword_in_text(term,str(b))]
+        evidence.append({"requirement":term,"required":weight(term)==3,"status":"covered" if term in matched else "not_in_resume","resume_evidence":snippets[:2],"action":"بررسی شود؛ فقط با سابقه تأییدشده اضافه شود." if term in missing else "پوشش داده شده است."})
+    return {"method_version":"3.0", "assessment_type":"internal_review", "total_score":coverage,
+            "band":score_band(coverage) if coverage is not None else "Unassessed",
+            "categories":categories,"max_scores":{"keyword_match":60,"achievements":10,"action_verbs":10,"readability":10,"skills":10,"projects":0,"grammar":0,"formatting":0},
+            "keyword_matched":matched,"keyword_missing":missing,"requirements":evidence,
+            "coverage_score":coverage,"content_score":sum(categories.values()) if has_content else 0,
+            "file_health":{"status":"not_checked"},
+            "notice":"ارزیابی داخلی برنامه؛ امتیاز سامانه کارفرما یا احتمال قبولی نیست."}

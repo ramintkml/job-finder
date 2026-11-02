@@ -93,7 +93,10 @@ def _as_str_list(value: Any, *, limit: int = 6) -> list[str]:
 async def apply_work_result(db: Session, row: WorkJob, result: dict[str, Any]) -> dict:
     """Mark job done and apply side effects. Returns toast/edit hints for logging."""
     job_type = row.job_type
-    if job_type == JOB_LINKEDIN_EMAIL:
+    if job_type == "document_variant":
+        from app.services.documents import apply_document
+        out = await apply_document(db, row, result)
+    elif job_type == JOB_LINKEDIN_EMAIL:
         out = await _apply_linkedin_email(db, row, result)
     elif job_type in (JOB_LINKEDIN_RESUME, JOB_ATS_REGENERATE):
         out = await _apply_ats(db, row, result)
@@ -161,6 +164,13 @@ async def fail_work_job(db: Session, row: WorkJob, error: str) -> None:
     if row.job_type == JOB_CODEX_TEXT:
         return
 
+    if row.job_type == "document_variant":
+        from app.database import DocumentArtifact
+        payload = json.loads(row.payload_json or "{}")
+        item = db.get(DocumentArtifact, int(payload.get("artifact_id", 0)))
+        if item and item.owner_id == row.user_id:
+            item.status = "failed"
+            item.error = "ساخت فایل موفق نبود؛ دوباره تلاش کنید."
     # Roll back ATS generating state
     if row.job_type in (JOB_LINKEDIN_RESUME, JOB_ATS_REGENERATE):
         if row.job_type == JOB_ATS_REGENERATE:
@@ -336,7 +346,6 @@ async def _apply_codex_apply(db: Session, row: WorkJob, result: dict) -> dict:
     resume_struct: dict[str, Any] | None = None
     if resume_md and description:
         try:
-            from app.ats.keywords import extract_jd_keywords_hybrid
             from app.ats.score import markdown_resume_to_dict, score_resume
 
             resume_struct = markdown_resume_to_dict(resume_md)
@@ -346,17 +355,30 @@ async def _apply_codex_apply(db: Session, row: WorkJob, result: dict) -> dict:
                 resume_struct = _enrich_from_markdown_sections(resume_md, resume_struct)
             except Exception:
                 pass
-            hybrid = await extract_jd_keywords_hybrid(
-                description,
-                title=title,
-            )
+            # Completion must never wait for another job from the very worker completing it.
+            from app.ats.score import extract_jd_keywords, keyword_in_text
+            verified = []
+            for requirement in result.get("requirements", [])[:60]:
+                if not isinstance(requirement, dict): continue
+                term, quote = str(requirement.get("term", "")).strip(), str(requirement.get("quote", "")).strip()
+                if term and quote and quote in description and keyword_in_text(term, quote):
+                    verified.append({"term":term,"priority":requirement.get("priority"),"quote":quote})
+            terms = extract_jd_keywords(description, [r["term"] for r in verified])
+            hybrid = {"all":terms,"must_have":[r["term"] for r in verified if r["priority"] == "required"],"claimable":[],"missing":[]}
             resume_struct["keywords_from_jd"] = hybrid.get("all") or []
+            resume_struct["required_keywords"] = hybrid.get("must_have") or []
             ats_scoring = score_resume(resume_struct, description, include_pdf=False)
             ats_scoring["hybrid_keywords"] = {
                 "must_have": hybrid.get("must_have") or [],
                 "claimable": hybrid.get("claimable") or [],
                 "missing": hybrid.get("missing") or [],
             }
+            source = json.loads(row.payload_json or "{}").get("base_cv_text", "")
+            from app.ats.score import keyword_in_text
+            for requirement in ats_scoring.get("requirements", []):
+                requirement["source_verified"] = keyword_in_text(requirement["requirement"], source)
+                if not requirement["source_verified"]:
+                    requirement["action"] = "سابقه در پروفایل تأیید نشده؛ از کاربر سؤال شود."
             ats_score = int(ats_scoring.get("total_score") or 0)
         except Exception:
             logger.exception("ATS score failed for Codex apply %s", row.id)
@@ -414,9 +436,11 @@ async def _apply_codex_apply(db: Session, row: WorkJob, result: dict) -> dict:
         app.title = short_title[:512]
         title = short_title
 
+    from app.services.documents import detect_language
+    language = detect_language(description)
     docx_dir = Path(ATS_DIR) / "applications" / str(app.id)
     docx_dir.mkdir(parents=True, exist_ok=True)
-    docx_path = docx_dir / resume_filename(lang="en", job_title=title, ext="docx")
+    docx_path = docx_dir / resume_filename(lang=language, job_title=title, ext="docx")
     legacy_docx = docx_dir / "resume.docx"
     eval_path = docx_dir / "evaluation.md"
 
@@ -448,17 +472,34 @@ async def _apply_codex_apply(db: Session, row: WorkJob, result: dict) -> dict:
             app.resume_json = json.dumps(resume_struct, ensure_ascii=False, default=str)[:400000]
         except Exception:
             logger.exception("Failed storing resume_json")
-        pdf_path = docx_dir / resume_filename(lang="en", job_title=title, ext="pdf")
+        pdf_path = docx_dir / resume_filename(lang=language, job_title=title, ext="pdf")
         try:
             from app.ats.pdf_export import export_resume_pdf
 
-            export_resume_pdf(resume_struct, pdf_path)
+            if language == "fa":
+                from app.ats.pdf_export import export_resume_pdf_fa
+                export_resume_pdf_fa(resume_struct, pdf_path)
+            else:
+                export_resume_pdf(resume_struct, pdf_path)
             if pdf_path.is_file():
                 app.resume_pdf_path = str(pdf_path)
                 (docx_dir / "resume.pdf").write_bytes(pdf_path.read_bytes())
         except Exception:
             logger.exception("Failed generating English resume.pdf")
 
+    if app.resume_docx_path:
+        from app.ats.artifact_check import inspect_files
+        checks = inspect_files(app.resume_docx_path, app.resume_pdf_path or "", expected_name=(resume_struct or {}).get("full_name", ""), expected_email=(resume_struct or {}).get("email", ""))
+        ats_scoring["file_health"] = checks
+        ats_scoring["primary_language"] = language
+        if language == "en" and checks.get("files", {}).get("pdf", {}).get("pages", 0):
+            ats_scoring["resume_length_review"] = checks["files"]["pdf"]["pages"] > 2
+        ats_scoring["fit_score"] = fit_i
+        ats_scoring["questions"] = [str(q)[:300] for q in result.get("questions", [])][:3]
+        app.ats_scores_json = json.dumps(ats_scoring, ensure_ascii=False)
+    if not app.resume_docx_path or not app.resume_pdf_path:
+        app.status = "failed"
+        app.error_message = "متن رزومه آماده است اما ساخت فایل کامل نشد؛ دوباره تلاش کنید."
     db.commit()
     db.refresh(app)
 
@@ -530,7 +571,7 @@ async def _apply_codex_apply(db: Session, row: WorkJob, result: dict) -> dict:
             "",
             "📊 <b>امتیازها</b>",
             f"• تناسب (Fit): <b>{fit_i if fit_i is not None else '—'}</b>/100",
-            f"• ATS کل: <b>{ats_score if ats_score is not None else '—'}</b>/100"
+            f"• پوشش الزامات (ارزیابی داخلی): <b>{ats_score if ats_score is not None else '—'}</b>/100"
             + (f" · {esc(str(ats_scoring.get('band') or ''))}" if ats_scoring.get("band") else ""),
         ]
     )
@@ -558,6 +599,10 @@ async def _apply_codex_apply(db: Session, row: WorkJob, result: dict) -> dict:
         lines.append("• Matched keywords:")
         for kw in matched[:12]:
             lines.append(f"  • {esc(str(kw))}")
+    questions = ats_scoring.get("questions") or []
+    if questions:
+        lines.extend(_quote_block("❓ برای کامل‌تر شدن رزومه", [esc(str(q)) for q in questions]))
+        lines.append("پاسخ‌ها را با /editcv به پروفایل اضافه و تأیید کنید؛ سپس بهبود رزومه را بزنید.")
     if notes:
         lines.extend(_quote_block("💡 نکات رزومه", [esc(notes[:800])]))
     if out_dir:
@@ -566,7 +611,7 @@ async def _apply_codex_apply(db: Session, row: WorkJob, result: dict) -> dict:
         [
             "",
             "📎 فایل‌های <b>evaluation.md</b> و رزومه در ادامه ارسال می‌شوند.",
-            "دکمه‌ها: Improve · ترجمه فارسی · PDF",
+            "دکمه‌ها: بهبود رزومه · رزومه فارسی/انگلیسی · CV کامل فارسی/انگلیسی",
             "قبل از ارسال واقعی، خودتان مرور کنید.",
         ]
     )

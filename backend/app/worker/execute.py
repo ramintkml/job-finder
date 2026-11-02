@@ -41,6 +41,9 @@ async def execute_job(job_type: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _execute_job(job_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if job_type == "document_variant":
+        from app.services.documents import generate_document
+        return await generate_document(payload)
     if job_type == JOB_LINKEDIN_EMAIL:
         return await _exec_linkedin_email(payload)
     if job_type in (JOB_LINKEDIN_RESUME, JOB_ATS_REGENERATE):

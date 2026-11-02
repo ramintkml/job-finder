@@ -92,7 +92,7 @@ def hard_insert(resume: dict[str, Any], ledger: KeywordLedger) -> tuple[dict[str
     skills = _skills_dict(resume)
     text = flatten_resume_text({**resume, "skills": skills})
 
-    targets = [t for t in ledger.terms if t.decision in ("Claim", "Bridge") and t.placements.skills]
+    targets = [t for t in ledger.terms if t.decision == "Claim" and t.evidence.snippet and t.placements.skills]
 
     for t in targets:
         surface = (t.surface_forms.write_as or t.jd_term).strip()

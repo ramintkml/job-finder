@@ -241,6 +241,10 @@ h1 {{
   margin: 0 0 4px 0;
 }}
 .meta {{
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: right;
+  font-family: Arial, Helvetica, sans-serif;
   font-size: 9.5pt;
   color: #5c6775;
   margin: 0 0 2px 0;

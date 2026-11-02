@@ -55,7 +55,7 @@ async def run_pipeline_v2(
 
     system = (
         "You are an ATS resume writer for pipeline v2. "
-        "The KEYWORD LEDGER is locked: write every Claim and Bridge term using EXACT JD spelling "
+        "The KEYWORD LEDGER is locked: write only evidence-backed Claim terms using EXACT JD spelling; Bridge means a gap, never a claimed skill; do not insert it "
         "in the Skills section (merged into existing categories). "
         "Never invent employers, degrees, dates, metrics, or Omit tools. "
         "Return exactly one JSON object."
@@ -118,7 +118,7 @@ Return JSON with this shape (keep this section order; use only this user's facts
   ],
   "languages": ["English: IELTS ..."],
   "certifications": ["..."],
-  "keywords_from_jd": ["Claim+Bridge exact spellings only"],
+  "keywords_from_jd": ["all JD requirements, including unsupported gaps"],
   "diff_summary": "2-4 sentences on what changed vs the base CV for this job"
 }}
 Omit empty optional sections rather than inventing content.
@@ -150,7 +150,8 @@ Omit empty optional sections rather than inventing content.
         data, job_text=f"{title}\n{company}\n{description}"
     )
 
-    data["keywords_from_jd"] = ledger.scored_write_as()
+    data["keywords_from_jd"] = [t.jd_term for t in ledger.terms]
+    data["required_keywords"] = [t.jd_term for t in ledger.terms if t.priority == "must_have"]
     data["_pipeline_v2"] = {
         "ledger_summary": ledger.summary,
         "insert_log": ledger.insert_log,

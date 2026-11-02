@@ -1,11 +1,17 @@
 const API = "/api";
 
-async function fetchJson(path, options = {}) {
+let refreshing;
+const csrf = () => decodeURIComponent(document.cookie.split("; ").find(x=>x.startsWith("career_csrf="))?.split("=").slice(1).join("=") || "");
+async function fetchJson(path, options = {}, retry = true) {
   const res = await fetch(`${API}${path}`, {
     ...options,
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json", ...options.headers },
+    headers: { "Content-Type": "application/json", "X-CSRF-Token":csrf(), ...options.headers },
   });
+  if (res.status === 401 && retry && path !== "/auth/refresh" && path !== "/auth/login") {
+    refreshing ||= fetchJson("/auth/refresh", {method:"POST"}, false).finally(()=>{refreshing=null;});
+    try {await refreshing;return fetchJson(path,options,false);} catch {}
+  }
   if (res.status === 401 && !path.startsWith("/auth/")) window.dispatchEvent(new Event("session-expired"));
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -24,7 +30,13 @@ async function fetchJson(path, options = {}) {
 export const api = {
   telegramLogin: (init_data) => fetchJson("/auth/login", {method: "POST", body: JSON.stringify({init_data})}),
   me: () => fetchJson("/auth/me"),
-  login: (password) => fetchJson("/auth/login", {method: "POST", body: JSON.stringify({password})}),
+  login: (data) => fetchJson("/auth/login", {method:"POST",body:JSON.stringify(data)}),
+  register: (data) => fetchJson("/auth/register", {method:"POST",body:JSON.stringify(data)}),
+  forgot: (email) => fetchJson("/auth/forgot-password", {method:"POST",body:JSON.stringify({email})}),
+  reset: (data) => fetchJson("/auth/reset-password", {method:"POST",body:JSON.stringify(data)}),
+  linkTelegram: () => fetchJson("/auth/telegram-link",{method:"POST"}),
+  documents: id => fetchJson(`/applications/${id}/documents`),
+  requestDocument: (id,kind,language) => fetchJson(`/applications/${id}/documents`,{method:"POST",body:JSON.stringify({kind,language})}),
   logout: () => fetchJson("/auth/logout", {method: "POST"}),
   health: () => fetchJson("/health"),
   workerStatus: () => fetchJson("/worker/status"),

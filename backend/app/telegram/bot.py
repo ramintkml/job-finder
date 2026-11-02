@@ -638,6 +638,16 @@ class ReviewBot:
             cmd = cmd.split("@", 1)[0]
             text = f"{cmd} {rest}".strip() if rest else cmd
 
+        if text.startswith("/link ") and telegram_user_id is not None:
+            from app.api.auth import consume_link
+            try:
+                consume_link(text.split(" ", 1)[1].strip(), int(telegram_user_id))
+                message = "✅ حساب وب به تلگرام متصل شد. درخواست‌ها و رزومه قبلی شما در وب قابل دسترسی است."
+            except ValueError as exc:
+                message = str(exc)
+            await self.send_message(message, chat_id=int(chat_id))
+            return
+
         from app.telegram import bot_user_tools
 
         if telegram_user_id is not None and text in ("➕ افزودن پروژه", "/addproject", "/editcv", "ویرایش رزومه"):

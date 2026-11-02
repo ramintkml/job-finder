@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean,
+    UniqueConstraint,
     Column,
     DateTime,
     Float,
@@ -87,6 +88,57 @@ class User(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class WebAccount(Base):
+    __tablename__ = "web_accounts"
+    id = Column(Integer, primary_key=True)
+    username = Column(String(64), unique=True, nullable=False)
+    email = Column(String(254), unique=True, nullable=False)
+    password_hash = Column(Text, nullable=False)
+    owner_id = Column(Integer, unique=True, nullable=False)
+    is_admin = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    id = Column(String(64), primary_key=True)
+    account_id = Column(Integer, nullable=True, index=True)
+    owner_id = Column(Integer, nullable=False)
+    is_admin = Column(Boolean, default=False)
+    refresh_hash = Column(String(64), nullable=False)
+    csrf = Column(String(64), nullable=False)
+    expires = Column(Integer, nullable=False)
+    revoked = Column(Boolean, default=False)
+
+
+class AccountToken(Base):
+    __tablename__ = "account_tokens"
+    token_hash = Column(String(64), primary_key=True)
+    account_id = Column(Integer, nullable=False)
+    purpose = Column(String(16), nullable=False)
+    expires = Column(Integer, nullable=False)
+    used = Column(Boolean, default=False)
+
+
+class DocumentArtifact(Base):
+    __tablename__ = "document_artifacts"
+    __table_args__ = (UniqueConstraint("application_id", "kind", "language", "source_hash", name="uq_document_source"),)
+    source_hash = Column(String(64), nullable=False)
+    id = Column(Integer, primary_key=True)
+    application_id = Column(Integer, nullable=False, index=True)
+    owner_id = Column(Integer, nullable=False, index=True)
+    kind = Column(String(16), nullable=False)
+    language = Column(String(4), nullable=False)
+    status = Column(String(16), default="pending")
+    work_job_id = Column(Integer, nullable=True)
+    source_text = Column(Text, nullable=False)
+    content_json = Column(Text, nullable=True)
+    docx_path = Column(Text, nullable=True)
+    pdf_path = Column(Text, nullable=True)
+    checks_json = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
 
 
 class Subscription(Base):

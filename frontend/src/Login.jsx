@@ -1,10 +1,30 @@
 import { useEffect, useState } from "react";
 import "./login.css";
+import { api } from "./api";
 
 import Icon from "./Icon";
 import BrandMark from "./BrandMark";
 
-export default function Login({ checking, password, onPasswordChange, onSubmit, pending, error }) {
+export default function Login({ checking, onAuthenticated, initialMode="login", onCancel }) {
+  const [mode,setMode]=useState(initialMode);
+  const [username,setUsername]=useState("");
+  const [email,setEmail]=useState("");
+  const [password,onPasswordChange]=useState("");
+  const [token,setToken]=useState("");
+  const [remember,setRemember]=useState(false);
+  const [pending,setPending]=useState(false);
+  const [error,setError]=useState("");
+  const [message,setMessage]=useState("");
+  async function onSubmit(event) {
+    event.preventDefault();setPending(true);setError("");setMessage("");
+    try {
+      if(mode==="forgot") {const r=await api.forgot(email);setMessage(r.message);setMode("reset");}
+      else if(mode==="reset") {const r=await api.reset({token,password});setMessage(r.message);setMode("login");onPasswordChange("");}
+      else {const result=mode==="register"?await api.register({username,email,password}):await api.login({username,password,remember});onAuthenticated(result);}
+    } catch(e) {setError(e.status===429?"کمی بعد دوباره تلاش کنید.":e.message || "ارتباط برقرار نشد.");}
+    finally {setPending(false);}
+  }
+  function changeMode(value){setMode(value);setError("");setMessage("");onPasswordChange("");}
   const [visible, setVisible] = useState(false);
   const [capsLock, setCapsLock] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -14,7 +34,7 @@ export default function Login({ checking, password, onPasswordChange, onSubmit, 
   }, []);
   const checkCaps = event => setCapsLock(Boolean(event.getModifierState?.("CapsLock")));
   return (
-    <main className="login-page" lang="fa" dir="rtl" data-help-open={helpOpen}>
+    <main className="login-page" lang="fa" dir="rtl" data-help-open={helpOpen} data-auth-mode={mode} data-auth-error={!!error}>
       <header className="login-header">
         <a className="login-brand" href="/" aria-label="Career Pilot، صفحه اصلی"><BrandMark /><span>Career Pilot<span className="login-brand-dot">.</span></span></a>
         <span className="login-header-note">قدم بعدی، با اطمینان بیشتر</span>
@@ -51,20 +71,26 @@ export default function Login({ checking, password, onPasswordChange, onSubmit, 
           <div className="login-form-content">
             <div className="login-welcome-icon"><Icon name="lock" size={24}/></div>
             <span className="login-section-label">فضای کار شخصی شما</span>
-            <h1 id="login-title">خوش برگشتید.</h1>
-            <p className="login-form-intro">برای ادامه مسیر، وارد داشبورد خود شوید.</p>
+            <h1 id="login-title">{mode==="register"?"حساب خود را بسازید.":mode==="forgot"||mode==="reset"?"بازیابی رمز عبور":"خوش برگشتید."}</h1>
+            <p className="login-form-intro">{mode==="register"?"رزومه‌ها و سوابق شما در فضای اختصاصی خودتان.":"برای ادامه مسیر، وارد حساب خود شوید."}</p>
             {checking ? <div className="login-checking" role="status"><span className="login-spinner"/>در حال بررسی دسترسی شما…</div> : <form className="login-form" onSubmit={onSubmit}>
-              <label htmlFor="dashboard-password">رمز ورود داشبورد</label>
+              {(mode==="login"||mode==="register")&&<><label htmlFor="auth-username">{mode==="register"?"نام کاربری انگلیسی":"نام کاربری یا ایمیل"}</label><div className="login-input-wrap"><input id="auth-username" required autoComplete="username" value={username} onChange={e=>setUsername(e.target.value)} dir="ltr" maxLength={254}/></div></>}
+              {(mode==="register"||mode==="forgot")&&<><label htmlFor="auth-email">ایمیل بازیابی</label><div className="login-input-wrap"><input id="auth-email" type="email" required autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} dir="ltr" maxLength={254}/></div></>}
+              {mode==="reset"&&<><label htmlFor="reset-token">کد ارسال‌شده به ایمیل</label><div className="login-input-wrap"><input id="reset-token" required value={token} onChange={e=>setToken(e.target.value)} dir="ltr"/></div></>}
+              {mode!=="forgot"&&<><label htmlFor="dashboard-password">{mode==="register"||mode==="reset"?"رمز عبور (حداقل ۱۲ کاراکتر)":"رمز عبور"}</label>
               <div className={`login-input-wrap${error ? " has-error" : ""}`}>
                 <Icon name="lock" size={19}/>
-                <input id="dashboard-password" name="password" type={visible ? "text" : "password"} autoComplete="current-password" required value={password} onChange={event => onPasswordChange(event.target.value)} onKeyDown={checkCaps} onKeyUp={checkCaps} onBlur={() => setCapsLock(false)} placeholder="رمز خود را وارد کنید" disabled={pending} dir="ltr" aria-invalid={Boolean(error)} aria-describedby={error ? "login-error" : capsLock ? "login-caps" : undefined}/>
+                <input id="dashboard-password" name="password" type={visible ? "text" : "password"} autoComplete={mode==="login"?"current-password":"new-password"} required minLength={mode==="login"?1:12} maxLength={256} value={password} onChange={event => onPasswordChange(event.target.value)} onKeyDown={checkCaps} onKeyUp={checkCaps} onBlur={() => setCapsLock(false)} placeholder="رمز خود را وارد کنید" disabled={pending} dir="ltr" aria-invalid={Boolean(error)}/>
                 <button className="login-eye" type="button" onClick={() => setVisible(value => !value)} aria-label={visible ? "پنهان کردن رمز" : "نمایش رمز"} aria-pressed={visible} disabled={pending}><Icon name={visible ? "eyeOff" : "eye"} size={20}/></button>
-              </div>
+              </div></>}
+              {mode==="login"&&<label className="auth-remember"><input type="checkbox" checked={remember} onChange={e=>setRemember(e.target.checked)}/>مرا به خاطر بسپار</label>}
+              {message&&<p className="login-help" role="status">{message}</p>}
               {capsLock && <p id="login-caps" className="login-caps" role="status">کلید Caps Lock روشن است.</p>}
               {error && <div id="login-error" className="login-error" role="alert"><Icon name="alert" size={18}/><span>{error}</span></div>}
-              <button className="login-submit" type="submit" disabled={pending || !password.trim()}>{pending ? <><span className="login-spinner"/>در حال ورود…</> : <>ورود به داشبورد<Icon name="arrow" size={20}/></>}</button>
-              <button className="login-help-toggle" type="button" onClick={() => setHelpOpen(value => !value)} aria-expanded={helpOpen} aria-controls="login-help"><Icon name="help" size={16}/>برای ورود به راهنمایی نیاز دارید؟</button>
-              {helpOpen && <p id="login-help" className="login-help">از رمز ورود اختصاصی داشبورد استفاده کنید. اگر به آن دسترسی ندارید، با مدیر سرویس تماس بگیرید.</p>}
+              <button className="login-submit" type="submit" disabled={pending}>{pending?<><span className="login-spinner"/>لطفاً صبر کنید…</>:mode==="register"?"ثبت‌نام":mode==="forgot"?"ارسال کد بازیابی":mode==="reset"?"ذخیره رمز جدید":"ورود به داشبورد"}<Icon name="arrow" size={20}/></button>
+              <div className="auth-switch"><button type="button" onClick={()=>changeMode(mode==="register"?"login":"register")}>{mode==="register"?"حساب دارید؟ ورود":"حساب ندارید؟ ثبت‌نام"}</button>{mode==="login"?<button type="button" onClick={()=>changeMode("forgot")}>رمز را فراموش کرده‌ام</button>:<button type="button" onClick={()=>changeMode("login")}>بازگشت به ورود</button>}</div>
+              {onCancel&&<button type="button" className="login-help-toggle" onClick={onCancel}>بازگشت به داشبورد</button>}
+
             </form>}
             <div className="login-divider"><span>همراه شما در هر قدم</span></div>
             <div className="login-features"><span><Icon name="file" size={17}/>رزومه شخصی</span><span><Icon name="sparkle" size={17}/>بررسی تناسب شغلی</span></div>

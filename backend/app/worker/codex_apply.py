@@ -329,14 +329,23 @@ def _structured_resume_prompt(*, base_cv: str, title: str, company: str,
             '"evaluation_md":"evidence-based fit review, strengths, gaps and apply advice", '
             '"fit_score":0,"recommendation":"Strong apply|Apply|Conditional|Skip", '
             '"apply_advice":"...","pros":["..."],"cons":["..."],"deal_breakers":["..."], '
-            '"ats_notes":"...","summary":"...","short_title":"short clean role name"}. '
+            '"ats_notes":"...","summary":"...","short_title":"short clean role name", "questions":["up to 3 important missing-information questions in Persian, if any"], "requirements":[{"term":"exact short JD skill phrase","priority":"required|preferred","quote":"verbatim supporting JD sentence"}]}. '
+            'Extract both required and preferred requirements from the full JD, with exact source quotes. '
             'Use this resume section order: header with only supplied contact details, Professional Summary, '
             'Core Skills, Selected Projects, Additional Experience if present, Professional Experience, '
-            'Research if present, Education, Languages & Certifications. Include the supplied candidate projects, '
-            'including new entries, and preserve their links. Tailor only supported claims to the job. '
+            'Research if present, Education, Languages & Certifications. Select the relevant supplied candidate projects, '
+            'considering new entries, and preserve links for selected entries. Tailor only supported claims to the job. '
             'Improve the existing draft using evaluation/ATS feedback when supplied. '
             'fit_score is an integer 0-100; recommendation must be one of the four listed values.'
         )
+    if not translate_fa:
+        from app.services.documents import detect_language
+        language = detect_language(description)
+        instructions += (" Create a concise job-targeted RESUME, normally 1-2 pages, not a full CV. Select the most relevant supported entries; do not copy every project. "
+                         "Ask up to three important missing-information questions in evaluation_md; do not block a draft or invent answers. ")
+        if language == "fa":
+            instructions = instructions.replace("complete tailored English resume markdown", "complete tailored Persian resume markdown")
+            instructions += " Write resume in Persian with these section headings: خلاصه حرفه‌ای, مهارت‌ها, پروژه‌های منتخب, سوابق شغلی, تحصیلات, زبان‌ها و گواهینامه‌ها. Preserve technical names and contacts. "
     inputs = {"base_cv": base_cv, "title": title, "company": company, "job_description": description,
               "ats_guide": guide, "previous_resume": previous_resume, "previous_evaluation": evaluation,
               "english_resume_json": english_json, "improve": improve, "ats_guidance": ats_guidance}
@@ -584,7 +593,10 @@ async def run_codex_apply(payload: dict[str, Any]) -> dict[str, Any]:
         max_len=60,
     )
 
-    docx_path = out_dir / resume_filename(lang="en", job_title=short_title, ext="docx")
+    from app.services.documents import detect_language
+    language = detect_language(description)
+    pdf_path = None
+    docx_path = out_dir / resume_filename(lang=language, job_title=short_title, ext="docx")
     # Keep legacy resume.docx copy for older tooling
     legacy_docx = out_dir / "resume.docx"
     resume_docx_b64 = None
@@ -601,14 +613,22 @@ async def run_codex_apply(payload: dict[str, Any]) -> dict[str, Any]:
                     structured = _enrich_from_markdown_sections(
                         resume_md, markdown_resume_to_dict(resume_md)
                     )
-                export_resume_docx(structured, docx_path)
+                if language == "fa":
+                    from app.ats.docx_export import export_resume_docx_fa
+                    export_resume_docx_fa(structured, docx_path)
+                else:
+                    export_resume_docx(structured, docx_path)
                 if docx_path.resolve() != legacy_docx.resolve():
                     legacy_docx.write_bytes(docx_path.read_bytes())
                 resume_docx_b64 = _file_b64(docx_path)
                 pdf_path = out_dir / resume_filename(
-                    lang="en", job_title=short_title, ext="pdf"
+                    lang=language, job_title=short_title, ext="pdf"
                 )
-                export_resume_pdf(structured, pdf_path)
+                if language == "fa":
+                    from app.ats.pdf_export import export_resume_pdf_fa
+                    export_resume_pdf_fa(structured, pdf_path)
+                else:
+                    export_resume_pdf(structured, pdf_path)
             except Exception:
                 logger.exception("EN DOCX/PDF export failed for %s", out_dir)
                 from app.ats.docx_export import export_markdown_docx
@@ -622,9 +642,13 @@ async def run_codex_apply(payload: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "engine": "codex",
+        "language": language,
+        "resume_pdf_b64": _file_b64(pdf_path) if pdf_path and pdf_path.is_file() else None,
         "workspace": str(workspace),
         "output_dir": str(out_dir),
         "fit_score": result.get("fit_score"),
+        "requirements": result.get("requirements") if isinstance(result.get("requirements"), list) else [],
+        "questions": result.get("questions") if isinstance(result.get("questions"), list) else [],
         "recommendation": result.get("recommendation") or "",
         "apply_advice": str(result.get("apply_advice") or "")[:4000],
         "pros": result.get("pros") if isinstance(result.get("pros"), list) else [],

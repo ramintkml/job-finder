@@ -45,3 +45,15 @@ Deploy backend and PC worker together after queue protocol changes. Back up the
 entire data directory including hidden credential/session keys before
 schema changes. The former project brief was a planning snapshot and has been
 replaced by this description of the implemented application.
+
+## Account and document invariants
+- Web JWT access lasts 15 minutes and is backed by revocable DB sessions. Never
+  accept JWT-selected algorithms or expose tokens in browser storage.
+- Password/Telegram account linking requires a single-use code sent privately by
+  the Telegram identity. Do not overwrite existing CVs or merge different accounts.
+- New web identities must link Telegram before using the Telegram-first CV flow.
+- Initial output is a targeted resume; full CV variants are explicitly requested.
+  Preserve each request's source snapshot, owner and worker claim identity.
+- ATS v3 is an internal assessment, not employer acceptance probability. Never
+  fabricate file-health passes or claim skills without source evidence. Do not
+  enqueue nested AI work while processing a worker completion.

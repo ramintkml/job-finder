@@ -130,7 +130,7 @@ def worker_claim(
     else:
         # Codex bridge + FA artifact sync still work when heavy-queue mode is off
         row = claim_next(
-            db, body.worker_id, only_types={JOB_CODEX_APPLY, JOB_SAVE_FILES, JOB_CV_EDIT, JOB_CODEX_TEXT}
+            db, body.worker_id, only_types={JOB_CODEX_APPLY, JOB_SAVE_FILES, JOB_CV_EDIT, JOB_CODEX_TEXT, "document_variant"}
         )
     if not row:
         return {"ok": True, "job": None}

@@ -79,7 +79,8 @@ Max 25 must_have and 15 nice_to_have.
             else:
                 missing.append(kw)
     else:
-        claimable = list(all_keywords)
+        claimable = []
+        missing = list(all_keywords)
 
     return {
         "must_have": _dedupe(ai_must)[:25],
